@@ -1,0 +1,30 @@
+[package]
+name = "obzenflow-fsm"
+description = "Async-first Finite State Machine library inspired by Akka (Classic) FSM"
+version = "0.1.0"
+edition = "2021"
+authors = ["ObzenFlow Contributors"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/obzenflow/obzenflow-fsm"
+homepage = "https://github.com/obzenflow/obzenflow-fsm"
+documentation = "https://docs.rs/obzenflow-fsm"
+keywords = ["fsm", "async", "state-machine", "actor", "finite-state-machine"]
+categories = ["asynchronous", "data-structures", "algorithms"]
+publish = true
+
+[dependencies]
+# Core dependencies only - no dependencies on other obzenflow crates
+async-trait = "0.1"
+tokio = { version = "1.35", features = ["rt", "macros", "time"] }
+tracing = "0.1"
+thiserror = "2.0"
+futures = "0.3"
+
+# For the builder pattern and type safety
+pin-project = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.35", features = ["full", "test-util"] }
+tracing-subscriber = "0.3"
+rand = "0.8"
