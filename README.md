@@ -13,7 +13,7 @@ While this adds some complexity for simple use cases, it ensures the FSM works c
 
 ## The Problem
 
-Our current design tries to pass `&mut Context` into async blocks:
+The current design of ObzenFlow tries to pass `&mut Context` into async blocks:
 
 ```rust
 .on("Event", |state, event, ctx: &mut Context| async move {
@@ -92,7 +92,7 @@ This aligns with Tokio's recommended patterns for shared state in async systems.
 
 ## Design Decisions: Why Not Typestate?
 
-You might be wondering - why use runtime state machines when Rust has such powerful type system features? We actually considered the typestate pattern, which would give us compile-time guarantees about valid state transitions. Here's why we stuck with the enum-based approach:
+You might be wondering, why use runtime state machines when Rust has such powerful type system features? We actually considered the typestate pattern, which would give us compile-time guarantees about valid state transitions. Here's why we stuck with the enum-based approach:
 
 ### The Storage Dilemma
 
@@ -121,8 +121,6 @@ Some of our most useful features just don't translate well to typestate:
 - **Unhandled event callbacks** - "Log any event we don't have a handler for"
 - **Dynamic timeout handlers** - "If we're in Pending for 30s, transition to Timeout"
 - **Entry/exit handlers** - Running cleanup code when leaving states
-
-### The Real Insight
 
 We're building for async, event-driven systems where events come from external sources (network, timers, user input). The typestate pattern shines when state transitions are driven by method calls in your own code. Different tools for different jobs!
 
