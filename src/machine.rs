@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::handlers::{TransitionHandler, StateHandler, TimeoutHandler};
 use crate::types::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
@@ -92,10 +92,10 @@ where
                 // Handle unhandled event
                 if let Some(handler) = &self.unhandled_handler {
                     handler(&self.current_state, &event, context).await?;
+                    Ok(vec![])
                 } else {
-                    warn!("Unhandled event {} in state {}", event_name, state_name);
+                    Err(format!("Unhandled event {} in state {}", event_name, state_name))
                 }
-                Ok(vec![])
             }
         }
     }
