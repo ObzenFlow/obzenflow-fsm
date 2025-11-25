@@ -40,13 +40,18 @@ enum DoorAction {
     Log(String),
 }
 
+#[derive(Clone)]
+struct DoorContext {
+    log: Arc<RwLock<Vec<String>>>,
+}
+
 impl FsmContext for DoorContext {}
 
 #[async_trait::async_trait]
 impl FsmAction for DoorAction {
     type Context = DoorContext;
     
-    async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+    async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             DoorAction::Ring => {
                 ctx.log.write().await.push("Ring!".to_string());
@@ -60,46 +65,45 @@ impl FsmAction for DoorAction {
     }
 }
 
-#[derive(Clone)]
-struct DoorContext {
-    log: Arc<RwLock<Vec<String>>>,
-}
-
 #[tokio::main]
 async fn main() {
     let fsm = FsmBuilder::new(DoorState::Closed)
         .when("Closed")
-            .on("Open", |_state, _event, ctx: Arc<DoorContext>| async move {
-                ctx.log.write().await.push("Opening door".to_string());
-                Ok(Transition {
-                    next_state: DoorState::Open,
-                    actions: vec![DoorAction::Ring],
+            .on("Open", |_state, _event, ctx: &mut DoorContext| {
+                Box::pin(async move {
+                    ctx.log.write().await.push("Opening door".to_string());
+                    Ok(Transition {
+                        next_state: DoorState::Open,
+                        actions: vec![DoorAction::Ring],
+                    })
                 })
             })
             .done()
         .when("Open")
-            .on("Close", |_state, _event, ctx: Arc<DoorContext>| async move {
-                ctx.log.write().await.push("Closing door".to_string());
-                Ok(Transition {
-                    next_state: DoorState::Closed,
-                    actions: vec![DoorAction::Log("Door closed".to_string())],
+            .on("Close", |_state, _event, ctx: &mut DoorContext| {
+                Box::pin(async move {
+                    ctx.log.write().await.push("Closing door".to_string());
+                    Ok(Transition {
+                        next_state: DoorState::Closed,
+                        actions: vec![DoorAction::Log("Door closed".to_string())],
+                    })
                 })
             })
             .done()
         .build();
 
     let mut door = fsm;
-    let ctx = Arc::new(DoorContext {
+    let mut ctx = DoorContext {
         log: Arc::new(RwLock::new(vec![])),
-    });
+    };
 
     // Open the door
-    let actions = door.handle(DoorEvent::Open, ctx.clone()).await.unwrap();
+    let actions = door.handle(DoorEvent::Open, &mut ctx).await.unwrap();
     println!("Actions: {:?}", actions);
     println!("State: {:?}", door.state());
 
     // Close the door
-    let actions = door.handle(DoorEvent::Close, ctx.clone()).await.unwrap();
+    let actions = door.handle(DoorEvent::Close, &mut ctx).await.unwrap();
     println!("Actions: {:?}", actions);
     println!("State: {:?}", door.state());
 

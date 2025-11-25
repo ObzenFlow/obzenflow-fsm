@@ -2,7 +2,6 @@
 //! It includes examples that would fail to compile if uncommented
 
 use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
-use std::sync::Arc;
 
 // Test types
 #[derive(Clone, Debug, PartialEq)]
@@ -48,8 +47,8 @@ impl FsmContext for DemoContext {
 #[async_trait::async_trait]
 impl FsmAction for DemoAction {
     type Context = DemoContext;
-    
-    async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+    async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         Ok(())
     }
 }
@@ -59,13 +58,15 @@ fn test_fsm_works_via_builder() {
     // ✅ This is the CORRECT way - using FsmBuilder
     let fsm = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
         .when("Start")
-            .on("Finish", |_state, _event: &DemoEvent, _ctx: Arc<DemoContext>| async {
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: DemoState::End,
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
     
     // Verify the FSM was created successfully

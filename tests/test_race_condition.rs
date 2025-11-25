@@ -100,7 +100,7 @@ async fn test_race_condition_from_hell() {
     impl FsmAction for RaceAction {
         type Context = RaceContext;
 
-        async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 RaceAction::StartTracking => {
                     // Initialize tracking
@@ -119,89 +119,108 @@ async fn test_race_condition_from_hell() {
         }
     }
 
-    let ctx = Arc::new(RaceContext {
-        in_flight: Arc::new(AtomicU64::new(0)),
-        metrics: Arc::new(RwLock::new(HashMap::new())),
-        shutdown_tx: broadcast::channel(100).0,
-        drain_barrier: Arc::new(Barrier::new(11)), // 10 FSMs + 1 coordinator
-    });
+    let in_flight = Arc::new(AtomicU64::new(0));
+    let metrics = Arc::new(RwLock::new(HashMap::new()));
+    let (shutdown_tx, _) = broadcast::channel(100);
+    let drain_barrier = Arc::new(Barrier::new(11)); // 10 FSMs + 1 coordinator
+
+    let ctx = RaceContext {
+        in_flight: in_flight.clone(),
+        metrics: metrics.clone(),
+        shutdown_tx: shutdown_tx.clone(),
+        drain_barrier: drain_barrier.clone(),
+    };
 
     // Create 10 racing FSMs
     let mut handles = vec![];
 
     for i in 0..10 {
-        let ctx_clone = ctx.clone();
+        let in_flight = in_flight.clone();
+        let metrics = metrics.clone();
+        let shutdown_tx = shutdown_tx.clone();
+        let drain_barrier = drain_barrier.clone();
+
         let handle = tokio::spawn(async move {
+            let mut ctx = RaceContext {
+                in_flight,
+                metrics,
+                shutdown_tx,
+                drain_barrier,
+            };
+
             let mut fsm = FsmBuilder::new(RaceState::Idle)
                 .when("Idle")
-                    .on("Start", move |_state, _event, ctx: Arc<RaceContext>| async move {
+                .on("Start", move |_state, _event, ctx: &mut RaceContext| {
+                    Box::pin(async move {
                         // Initialize metrics entry with complex locking
                         let mut metrics = ctx.metrics.write().await;
                         metrics.insert(
                             format!("fsm_{}", i),
-                            Arc::new(AtomicU64::new(0))
+                            Arc::new(AtomicU64::new(0)),
                         );
                         Ok(Transition {
                             next_state: RaceState::Racing { counter: 0 },
                             actions: vec![RaceAction::StartTracking],
                         })
                     })
-                    .done()
+                })
+                .done()
                 .when("Racing")
-                    .on("Increment", move |state, _event, ctx: Arc<RaceContext>| {
-                        let counter = match state {
-                            RaceState::Racing { counter } => counter + 1,
-                            _ => unreachable!(),
-                        };
-                        async move {
-                            // Simulate in-flight increment with potential underflow protection
-                            let _old = ctx.in_flight.fetch_add(1, Ordering::SeqCst);
+                .on("Increment", move |state, _event, ctx: &mut RaceContext| {
+                    let counter = match state {
+                        RaceState::Racing { counter } => counter + 1,
+                        _ => unreachable!(),
+                    };
+                    Box::pin(async move {
+                        // Simulate in-flight increment with potential underflow protection
+                        let _old = ctx.in_flight.fetch_add(1, Ordering::SeqCst);
 
-                            // Complex nested locking pattern
-                            let metrics = ctx.metrics.read().await;
-                            if let Some(counter) = metrics.get(&format!("fsm_{}", i)) {
-                                counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            drop(metrics);
+                        // Complex nested locking pattern
+                        let metrics = ctx.metrics.read().await;
+                        if let Some(counter_metric) =
+                            metrics.get(&format!("fsm_{}", i))
+                        {
+                            counter_metric.fetch_add(1, Ordering::Relaxed);
+                        }
+                        drop(metrics);
 
-                            Ok(Transition {
+                        Ok(Transition {
+                            next_state: RaceState::Racing { counter },
+                            actions: vec![RaceAction::UpdateMetrics],
+                        })
+                    })
+                })
+                .on("Decrement", move |state, _event, ctx: &mut RaceContext| {
+                    let state_clone = state.clone();
+                    let counter = match state {
+                        RaceState::Racing { counter } => counter.saturating_sub(1),
+                        _ => unreachable!(),
+                    };
+                    Box::pin(async move {
+                        // Simulate in-flight decrement with underflow protection
+                        let old = ctx.in_flight.fetch_update(
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            |v| v.checked_sub(1),
+                        );
+
+                        match old {
+                            Ok(_) => Ok(Transition {
                                 next_state: RaceState::Racing { counter },
-                                actions: vec![RaceAction::UpdateMetrics],
-                            })
-                        }
-                    })
-                    .on("Decrement", move |state, _event, ctx: Arc<RaceContext>| {
-                        let state_clone = state.clone();
-                        let counter = match state {
-                            RaceState::Racing { counter } => counter.saturating_sub(1),
-                            _ => unreachable!(),
-                        };
-                        async move {
-                            // Simulate in-flight decrement with underflow protection
-                            let old = ctx.in_flight.fetch_update(
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                                |v| v.checked_sub(1)
-                            );
-
-                            match old {
-                                Ok(_) => {
-                                    Ok(Transition {
-                                        next_state: RaceState::Racing { counter },
-                                        actions: vec![],
-                                    })
-                                }
-                                Err(_) => {
-                                    // Underflow protection - stay in same state
-                                    Ok(Transition {
-                                        next_state: state_clone,
-                                        actions: vec![],
-                                    })
-                                }
+                                actions: vec![],
+                            }),
+                            Err(_) => {
+                                // Underflow protection - stay in same state
+                                Ok(Transition {
+                                    next_state: state_clone,
+                                    actions: vec![],
+                                })
                             }
                         }
                     })
-                    .on("BeginDrain", move |_state, _event, ctx: Arc<RaceContext>| async move {
+                })
+                .on("BeginDrain", move |_state, _event, ctx: &mut RaceContext| {
+                    Box::pin(async move {
                         // Broadcast shutdown
                         let _ = ctx.shutdown_tx.send(());
                         Ok(Transition {
@@ -209,9 +228,11 @@ async fn test_race_condition_from_hell() {
                             actions: vec![RaceAction::SignalDrain],
                         })
                     })
-                    .done()
+                })
+                .done()
                 .when("Draining")
-                    .on("DrainComplete", move |_state, _event, ctx: Arc<RaceContext>| async move {
+                .on("DrainComplete", move |_state, _event, ctx: &mut RaceContext| {
+                    Box::pin(async move {
                         // Wait for barrier
                         ctx.drain_barrier.wait().await;
                         Ok(Transition {
@@ -219,25 +240,32 @@ async fn test_race_condition_from_hell() {
                             actions: vec![],
                         })
                     })
-                    .done()
+                })
+                .done()
                 .build();
 
             // === THE DEMON AWAKENS ===
-            fsm.handle(RaceEvent::Start, ctx_clone.clone()).await.unwrap();
+            fsm.handle(RaceEvent::Start, &mut ctx).await.unwrap();
 
             // === PHASE 1: POSSESSION ===
             // First, the demon must grow strong (avoid underflow)
             for _ in 0..50 {
-                fsm.handle(RaceEvent::Increment, ctx_clone.clone()).await.unwrap();
+                fsm.handle(RaceEvent::Increment, &mut ctx)
+                    .await
+                    .unwrap();
             }
 
             // === PHASE 2: CHAOS REIGNS ===
             // The demon goes berserk, randomly attacking the counter
             for _ in 0..100 {
                 if rand::random::<bool>() {
-                    fsm.handle(RaceEvent::Increment, ctx_clone.clone()).await.unwrap();
+                    fsm.handle(RaceEvent::Increment, &mut ctx)
+                        .await
+                        .unwrap();
                 } else {
-                    fsm.handle(RaceEvent::Decrement, ctx_clone.clone()).await.unwrap();
+                    fsm.handle(RaceEvent::Decrement, &mut ctx)
+                        .await
+                        .unwrap();
                 }
                 // Minimal async yield to maximize contention (demons fight for CPU)
                 tokio::task::yield_now().await;
@@ -246,11 +274,17 @@ async fn test_race_condition_from_hell() {
             // === PHASE 3: EXORCISM ===
             // Drain the demon's power back to zero
             for _ in 0..100 {
-                fsm.handle(RaceEvent::Decrement, ctx_clone.clone()).await.unwrap();
+                fsm.handle(RaceEvent::Decrement, &mut ctx)
+                    .await
+                    .unwrap();
             }
 
-            fsm.handle(RaceEvent::BeginDrain, ctx_clone.clone()).await.unwrap();
-            fsm.handle(RaceEvent::DrainComplete, ctx_clone.clone()).await.unwrap();
+            fsm.handle(RaceEvent::BeginDrain, &mut ctx)
+                .await
+                .unwrap();
+            fsm.handle(RaceEvent::DrainComplete, &mut ctx)
+                .await
+                .unwrap();
 
             fsm
         });

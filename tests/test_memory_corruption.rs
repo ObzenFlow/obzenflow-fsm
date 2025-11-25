@@ -117,7 +117,7 @@ async fn test_6_memory_corruption_gauntlet() {
     impl FsmAction for CorruptionAction {
         type Context = CorruptionContext;
 
-        async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 CorruptionAction::AllocateMemory(size) => {
                     ctx.allocated_memory.fetch_add(*size, Ordering::Relaxed);
@@ -296,11 +296,11 @@ async fn test_6_memory_corruption_gauntlet() {
             fsm_count_clone.fetch_add(1, Ordering::SeqCst);
 
             // Create a memory-hungry context
-            let ctx = Arc::new(CorruptionContext::new(
+            let mut ctx = CorruptionContext::new(
                 i,
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicUsize::new(0))
-            ));
+            );
 
             // Allocate some memory
             ctx.allocated_memory.store(1024 * 1024, Ordering::SeqCst); // 1MB per FSM
@@ -311,9 +311,9 @@ async fn test_6_memory_corruption_gauntlet() {
                 CorruptionState::Spawning { id: i }
             )
                 .when("Spawning")
-                    .on("Die", |state, _event: &CorruptionEvent, _ctx: Arc<CorruptionContext>| {
+                    .on("Die", |state, _event: &CorruptionEvent, _ctx: &mut CorruptionContext| {
                         let state = state.clone();
-                        async move {
+                        Box::pin(async move {
                             if let CorruptionState::Spawning { id: _ } = state {
                                 Ok(Transition {
                                     next_state: CorruptionState::Dead,
@@ -322,7 +322,7 @@ async fn test_6_memory_corruption_gauntlet() {
                             } else {
                                 unreachable!()
                             }
-                        }
+                        })
                     })
                     .done()
                 .build();
@@ -331,7 +331,7 @@ async fn test_6_memory_corruption_gauntlet() {
             sleep(Duration::from_millis(rand::random::<u64>() % 100)).await;
 
             // Die
-            let _ = fsm.handle(CorruptionEvent::Die, ctx).await;
+            let _ = fsm.handle(CorruptionEvent::Die, &mut ctx).await;
 
             death_count_clone.fetch_add(1, Ordering::SeqCst);
         });

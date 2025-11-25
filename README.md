@@ -7,93 +7,55 @@ Finite State Machines are at the heart of how ObzenFlow works. This is our own c
 - **ObzenFlow** is the main workflow/orchestration project and overall system.
 - **ObzenFlow FSM** is this reusable finite state machine library that powers ObzenFlow, published as the Rust crate `obzenflow-fsm`.
 
-This FSM library requires contexts to be wrapped in `Arc`. This is a deliberate design choice to support:
+## Context Ownership Model (`0.2.x`)
 
-1. **Async closures** - Handlers are async blocks that need to own their data (primary reason)
-2. **Multiple FSM instances** - Different FSMs can share resources like journals or message buses
-3. **Thread safety** - The FSM can be safely used across thread boundaries
-4. **Future flexibility** - Enables concurrent patterns if needed in the future
+Starting in `0.2.0`, this library uses a **single-owner mutable context** API:
 
-While this adds some complexity for simple use cases, it ensures the FSM works correctly in all async scenarios without lifetime issues.
+- The FSM does **not** require `Arc<Context>` anymore.
+- Instead, the caller (typically a supervisor) owns the context by value and passes `&mut Context` into the FSM.
 
-## The Problem
-
-The current design of ObzenFlow tries to pass `&mut Context` into async blocks:
+At a high level you use it like this:
 
 ```rust
-.on("Event", |state, event, ctx: &mut Context| async move {
-    // This doesn't work! ctx doesn't live long enough
-    ctx.something.await;
-})
-```
-
-## Solution: Shared Ownership with Interior Mutability
-
-Instead of passing `&mut Context`, we'll use `Arc<Context>` where Context provides interior mutability:
-
-```rust
-// Context is now cloneable and contains Arc'd resources
-#[derive(Clone)]
-struct StageContext {
-    event_store: Arc<EventStore>,
-    pipeline_tx: mpsc::Sender<Message>,  // Already cloneable
-    metrics: Arc<RwLock<Metrics>>,
-    // etc.
-}
-
-// Handler signature changes to:
-.on("Event", |state, event, ctx: Arc<Context>| async move {
-    // Now we can move ctx into the async block!
-    ctx.event_store.write(event).await?;
-    ctx.pipeline_tx.send(msg).await?;
-})
-```
-
-## Updated FSM Builder API
-
-```rust
-// Handler type changes to accept Arc<C> instead of &mut C
-type TransitionHandler<S, E, C, A> = Arc<
-    dyn Fn(&S, &E, Arc<C>) -> Pin<Box<dyn Future<Output = Result<Transition<S, A>, String>> + Send>>
-        + Send
-        + Sync,
->;
-
-// Usage looks like:
-let fsm = FsmBuilder::new(StageState::Created)
-    .when("Running")
-        .on("ProcessEvent", |state, event, ctx| async move {
-            // ctx is Arc<StageContext> - can be moved into async block
-            let data = ctx.event_store.read(event.id).await?;
-            
-            if let Some(metric) = process_data(data) {
-                ctx.metrics.write().await.record(metric);
-            }
-            
+let mut context = MyContext::new(...);
+let mut fsm = FsmBuilder::new(MyState::Idle)
+    .when("Idle")
+        .on("Start", |state, event, ctx: &mut MyContext| async move {
+            // ctx is &mut MyContext; mutate it directly
+            ctx.counters.starts += 1;
             Ok(Transition {
-                next_state: state.clone(),
-                actions: vec![StageAction::Continue],
+                next_state: MyState::Running,
+                actions: vec![MyAction::Log("started".into())],
             })
         })
         .done()
     .build();
+
+let actions = fsm.handle(MyEvent::Start, &mut context).await?;
+fsm.execute_actions(actions, &mut context).await?;
 ```
 
-## Benefits
+### Why this is still “functional in spirit”
 
-1. **No lifetime issues** - Arc can be cloned and moved into async blocks
-2. **Natural async/await** - Handlers can use async operations freely  
-3. **Shared state** - Multiple handlers can access the same context
-4. **Thread safe** - Arc ensures safe sharing across tasks
+Semantically, each step is still a Mealy-style transition:
 
-## Migration Path
+- `(state, context, event) → (next_state, updated_context, actions)`
 
-1. Change handler signatures to accept `Arc<C>`
-2. Make Context types cloneable with Arc'd internals
-3. Update tests to use the new pattern
-4. Document the pattern clearly
+The `&mut Context` API is just an in-place encoding of that function:
 
-This aligns with Tokio's recommended patterns for shared state in async systems.
+- Rust’s borrow checker guarantees there is only **one mutable reference** to the context at a time.
+- The supervisor owns `(StateMachine, Context)` and drives it step by step.
+
+This aligns better with the “single writer per FSM” model and avoids the accidental shared mutability that `Arc<RwLock<…>>` encouraged in earlier versions.
+
+### What about sharing?
+
+If you truly need to share something across tasks (journals, message bus handles, metrics exporters, etc.), you should:
+
+- Wrap just those resources in `Arc` (or channels) inside your context, and
+- Continue to pass `&mut Context` into the FSM.
+
+The FSM library itself no longer imposes `Arc<Context>`; sharing becomes an explicit design choice at the application level.
 
 ## Design Decisions: Why Not Typestate?
 

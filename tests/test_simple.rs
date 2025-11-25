@@ -59,8 +59,8 @@ impl FsmContext for SimpleContext {
 #[async_trait::async_trait]
 impl FsmAction for SimpleAction {
     type Context = SimpleContext;
-    
-    async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+
+    async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             SimpleAction::Log(msg) => {
                 ctx.log.write().await.push(format!("Action: {}", msg));
@@ -78,68 +78,84 @@ impl FsmAction for SimpleAction {
 async fn test_simple_transitions() {
     let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
-            .on("Start", |_state, _event, ctx: Arc<SimpleContext>| async move {
+        .on("Start", |_state, _event, ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 ctx.log.write().await.push("Starting work".to_string());
                 Ok(Transition {
                     next_state: SimpleState::Working { progress: 0 },
                     actions: vec![SimpleAction::Log("Started".to_string())],
                 })
             })
-            .done()
+        })
+        .done()
         .when("Working")
-            .on("Progress", |state, _event, ctx: Arc<SimpleContext>| {
-                let progress = match state {
-                    SimpleState::Working { progress } => *progress + 10,
-                    _ => unreachable!(),
-                };
-                async move {
-                    ctx.log.write().await.push(format!("Progress: {}%", progress));
-                    
-                    if progress >= 100 {
-                        Ok(Transition {
-                            next_state: SimpleState::Done,
-                            actions: vec![SimpleAction::Notify],
-                        })
-                    } else {
-                        Ok(Transition {
-                            next_state: SimpleState::Working { progress },
-                            actions: vec![],
-                        })
-                    }
+        .on("Progress", |state, _event, ctx: &mut SimpleContext| {
+            let progress = match state {
+                SimpleState::Working { progress } => *progress + 10,
+                _ => unreachable!(),
+            };
+            Box::pin(async move {
+                ctx.log
+                    .write()
+                    .await
+                    .push(format!("Progress: {}%", progress));
+
+                if progress >= 100 {
+                    Ok(Transition {
+                        next_state: SimpleState::Done,
+                        actions: vec![SimpleAction::Notify],
+                    })
+                } else {
+                    Ok(Transition {
+                        next_state: SimpleState::Working { progress },
+                        actions: vec![],
+                    })
                 }
             })
-            .on("Finish", |_state, _event, ctx: Arc<SimpleContext>| async move {
+        })
+        .on("Finish", |_state, _event, ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 ctx.log.write().await.push("Force finishing".to_string());
                 Ok(Transition {
                     next_state: SimpleState::Done,
                     actions: vec![SimpleAction::Log("Finished".to_string())],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(SimpleContext { 
-        log: Arc::new(RwLock::new(vec![])) 
-    });
+    let mut ctx = SimpleContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
 
     // Start work
-    let actions = machine.handle(SimpleEvent::Start, ctx.clone()).await.unwrap();
+    let actions = machine
+        .handle(SimpleEvent::Start, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(machine.state(), SimpleState::Working { progress: 0 }));
-    
+
     // Make progress
     for expected in (10..=100).step_by(10) {
-        let actions = machine.handle(SimpleEvent::Progress, ctx.clone()).await.unwrap();
+        let actions = machine
+            .handle(SimpleEvent::Progress, &mut ctx)
+            .await
+            .unwrap();
         if expected < 100 {
             assert_eq!(actions.len(), 0);
-            assert!(matches!(machine.state(), SimpleState::Working { progress } if *progress == expected));
+            assert!(matches!(
+                machine.state(),
+                SimpleState::Working { progress } if *progress == expected
+            ));
         } else {
             assert_eq!(actions.len(), 1);
             assert!(matches!(machine.state(), SimpleState::Done));
         }
     }
-    
+
     // Verify context log
     let log = ctx.log.read().await;
     assert_eq!(log.len(), 11); // 1 start + 10 progress
@@ -151,48 +167,68 @@ async fn test_simple_transitions() {
 async fn test_entry_exit_handlers() {
     let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
-            .on("Start", |_state, _event: &SimpleEvent, _ctx: Arc<SimpleContext>| async {
+        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 Ok(Transition {
                     next_state: SimpleState::Working { progress: 0 },
                     actions: vec![],
                 })
             })
-            .done()
-        .on_entry("Working", |_state, ctx: Arc<SimpleContext>| async move {
-            ctx.log.write().await.push("Entered Working".to_string());
-            Ok(vec![SimpleAction::Log("Entry".to_string())])
         })
-        .on_exit("Working", |_state, ctx: Arc<SimpleContext>| async move {
-            ctx.log.write().await.push("Exited Working".to_string());
-            Ok(vec![SimpleAction::Log("Exit".to_string())])
+        .done()
+        .on_entry("Working", |_state, ctx: &mut SimpleContext| {
+            Box::pin(async move {
+                ctx.log
+                    .write()
+                    .await
+                    .push("Entered Working".to_string());
+                Ok(vec![SimpleAction::Log("Entry".to_string())])
+            })
+        })
+        .on_exit("Working", |_state, ctx: &mut SimpleContext| {
+            Box::pin(async move {
+                ctx.log
+                    .write()
+                    .await
+                    .push("Exited Working".to_string());
+                Ok(vec![SimpleAction::Log("Exit".to_string())])
+            })
         })
         .when("Working")
-            .on("Finish", |_state, _event: &SimpleEvent, _ctx: Arc<SimpleContext>| async {
+        .on("Finish", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 Ok(Transition {
                     next_state: SimpleState::Done,
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(SimpleContext { 
-        log: Arc::new(RwLock::new(vec![])) 
-    });
+    let mut ctx = SimpleContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
 
     // Transition to Working (triggers entry)
-    let actions = machine.handle(SimpleEvent::Start, ctx.clone()).await.unwrap();
+    let actions = machine
+        .handle(SimpleEvent::Start, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 1); // Entry action
-    
+
     let log = ctx.log.read().await;
     assert_eq!(*log, vec!["Entered Working"]);
     drop(log); // Release the read lock
 
     // Transition to Done (triggers exit)
-    let actions = machine.handle(SimpleEvent::Finish, ctx.clone()).await.unwrap();
+    let actions = machine
+        .handle(SimpleEvent::Finish, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 1); // Exit action
-    
+
     let log = ctx.log.read().await;
     assert_eq!(*log, vec!["Entered Working", "Exited Working"]);
 }
@@ -200,40 +236,50 @@ async fn test_entry_exit_handlers() {
 #[tokio::test]
 async fn test_timeout() {
     use tokio::time::sleep;
-    
+
     let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
-            .on("Start", |_state, _event: &SimpleEvent, _ctx: Arc<SimpleContext>| async {
+        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 Ok(Transition {
                     next_state: SimpleState::Working { progress: 0 },
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .when("Working")
-            .timeout(Duration::from_millis(50), |_state, _ctx: Arc<SimpleContext>| async {
-                Ok(Transition {
-                    next_state: SimpleState::Done,
-                    actions: vec![SimpleAction::Log("Timed out".to_string())],
+        .timeout(
+            Duration::from_millis(50),
+            |_state, _ctx: &mut SimpleContext| {
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: SimpleState::Done,
+                        actions: vec![SimpleAction::Log("Timed out".to_string())],
+                    })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(SimpleContext { 
-        log: Arc::new(RwLock::new(vec![])) 
-    });
+    let mut ctx = SimpleContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
 
     // Start work
-    machine.handle(SimpleEvent::Start, ctx.clone()).await.unwrap();
+    machine
+        .handle(SimpleEvent::Start, &mut ctx)
+        .await
+        .unwrap();
     assert!(matches!(machine.state(), SimpleState::Working { .. }));
 
     // Wait for timeout
     sleep(Duration::from_millis(60)).await;
-    
+
     // Check timeout
-    let actions = machine.check_timeout(ctx).await.unwrap();
+    let actions = machine.check_timeout(&mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(machine.state(), SimpleState::Done));
 }
@@ -242,38 +288,42 @@ async fn test_timeout() {
 async fn test_unhandled_events() {
     let fsm = FsmBuilder::<SimpleState, SimpleEvent, SimpleContext, SimpleAction>::new(SimpleState::Idle)
         .when("Idle")
-            .on("Start", |_state, _event: &SimpleEvent, _ctx: Arc<SimpleContext>| async {
+        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+            Box::pin(async move {
                 Ok(Transition {
                     next_state: SimpleState::Working { progress: 0 },
                     actions: vec![],
                 })
             })
-            .done()
-        .when_unhandled(|state, event, ctx: Arc<SimpleContext>| {
+        })
+        .done()
+        .when_unhandled(|state, event, ctx: &mut SimpleContext| {
             let state_name = state.variant_name().to_string();
             let event_name = event.variant_name().to_string();
-            async move {
-            ctx.log.write().await.push(format!(
-                "Unhandled {:?} in {:?}",
-                event_name,
-                state_name
-            ));
-            Ok(())
-        }
+            Box::pin(async move {
+                ctx.log.write().await.push(format!(
+                    "Unhandled {:?} in {:?}",
+                    event_name, state_name
+                ));
+                Ok(())
+            })
         })
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(SimpleContext { 
-        log: Arc::new(RwLock::new(vec![])) 
-    });
+    let mut ctx = SimpleContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
 
     // Send unhandled event
-    let actions = machine.handle(SimpleEvent::Finish, ctx.clone()).await.unwrap();
+    let actions = machine
+        .handle(SimpleEvent::Finish, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 0);
-    
+
     let log = ctx.log.read().await;
     assert_eq!(*log, vec!["Unhandled \"Finish\" in \"Idle\""]);
-    
+
     assert!(matches!(machine.state(), SimpleState::Idle)); // State unchanged
 }

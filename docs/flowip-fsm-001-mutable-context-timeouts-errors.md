@@ -1,5 +1,8 @@
 ## FLOWIP-FSM-001: Mutable-Context FSM API, Timeouts, and Errors
 
+**Version target**: obzenflow-fsm `0.2.x`  
+**Status**: In progress (0.2.x implementation underway)
+
 ### Single Mutable-Context API in `obzenflow_fsm`
 
 ### Overview
@@ -12,9 +15,9 @@
 
 For ObzenFlow and FLOWIP‑080p/080p‑part‑2, the ideal model is:
 
-- Each supervisor **owns** its FSM context.
+- Each *host* of the FSM (for example, an ObzenFlow “supervisor” or similar integration component) **owns** its FSM context.
 - The FSM and actions mutate that context directly via `&mut Context`.
-- Concurrency/sharing is explicit at the supervisor layer, not implicit inside `obzenflow_fsm`.
+- Concurrency/sharing is explicit in the host layer, not implicit inside `obzenflow_fsm`.
 
 There are no external users of `obzenflow_fsm`, so we can evolve the library to a **single, `&mut Context` API** and drop the `Arc<C>` context usage entirely.
 
@@ -54,7 +57,7 @@ The `&mut Context` API is simply an in-place encoding of this function (Rust let
 
 - With `&mut Context`:
   - There is exactly one mutable reference to the context at a time (enforced by Rust).
-  - The supervisor owns `(StateMachine, Context)` and drives it step by step.
+  - The host/caller owns `(StateMachine, Context)` and drives it step by step.
   - Each call to `handle(event, &mut context)` + subsequent `execute_actions(actions, &mut context)` is a single-threaded Mealy step.
 - Under the hood, Akka/Erlang actors also mutate their “current state” variable, even if the state *type* is immutable. The persistent FSM model is about **single-writer, deterministic evolution**, not about never using in-place writes in the runtime.
 
@@ -76,28 +79,6 @@ From a functional and event-sourcing perspective:
   - Makes it easier to reason about replay and determinism: there is one machine, one state, one event at a time.
 
 In that sense, `&mut Context` is closer to the functional ideal than “shared `Arc<RwLock<Context>>` everywhere”.
-
-### Current API (simplified)
-
-Relevant APIs today:
-
-- `StateMachine` (`src/machine.rs`):
-  - `pub async fn handle(&mut self, event: E, context: Arc<C>) -> Result<Vec<A>, String>`
-  - `pub async fn check_timeout(&mut self, context: Arc<C>) -> Result<Vec<A>, String>`
-  - `async fn apply_transition(&mut self, transition: Transition<S, A>, context: Arc<C>) -> Result<Vec<A>, String>`
-  - `pub async fn execute_actions(&self, actions: Vec<A>, context: &C) -> Result<(), String>`
-- `FsmBuilder` (`src/builder.rs`):
-  - Transition handlers: `Fn(&S, &E, Arc<C>) -> Fut`
-  - Entry/exit handlers: `Fn(&S, Arc<C>) -> Fut`
-  - Timeout handlers: `Fn(&S, Arc<C>) -> Fut`
-  - Unhandled handler: `Fn(&S, &E, Arc<C>) -> Fut`
-- Traits (`src/types.rs`):
-  - `pub trait FsmContext { fn describe(&self) -> String { … } }`
-  - `pub trait FsmAction { type Context: FsmContext; async fn execute(&self, ctx: &Self::Context) -> Result<(), String>; }`
-
-Runtimes (e.g., ObzenFlow) wrap contexts in `Arc` before passing them into the FSM.
-
----
 
 ### Guardrails to Stay “Functional in Spirit”
 
@@ -158,105 +139,7 @@ pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
 }
 ```
 
-All existing action types (e.g., `StatefulAction`, `JoinAction`, `JournalSinkAction`, `PipelineAction`) will update their implementations accordingly to mutate the context via `&mut Self::Context` instead of going through `Arc<RwLock<…>>`.
-
-#### 2. `StateMachine` methods take `&mut Context`
-
-In `src/machine.rs`, migrate to `&mut C`:
-
-- Signature changes:
-
-```rust
-impl<S, E, C, A> StateMachine<S, E, C, A>
-where
-    S: StateVariant,
-    E: EventVariant,
-    C: FsmContext,
-    A: FsmAction<Context = C>,
-{
-    pub async fn check_timeout(&mut self, context: &mut C) -> Result<Vec<A>, String> { … }
-
-    pub async fn handle(&mut self, event: E, context: &mut C) -> Result<Vec<A>, String> { … }
-
-    async fn apply_transition(
-        &mut self,
-        transition: Transition<S, A>,
-        context: &mut C,
-    ) -> Result<Vec<A>, String> { … }
-
-    pub async fn execute_actions(
-        &self,
-        actions: Vec<A>,
-        context: &mut C,
-    ) -> Result<(), String> {
-        for action in actions {
-            action.execute(context).await?;
-        }
-        Ok(())
-    }
-}
-```
-
-- Internal handler calls (transition, entry, exit, timeout, unhandled) will also be changed to receive `&mut C` instead of `Arc<C>`.
-
-#### 3. `FsmBuilder` handlers use `&mut Context`
-
-In `src/builder.rs`, update handler types:
-
-- Transition handlers from:
-
-```rust
-F: Fn(&S, &E, Arc<C>) -> Fut
-```
-
-to:
-
-```rust
-F: Fn(&S, &E, &mut C) -> Fut
-```
-
-- Entry/exit handlers from:
-
-```rust
-F: Fn(&S, Arc<C>) -> Fut
-```
-
-to:
-
-```rust
-F: Fn(&S, &mut C) -> Fut
-```
-
-- Timeout handlers from:
-
-```rust
-F: Fn(&S, Arc<C>) -> Fut
-```
-
-to:
-
-```rust
-F: Fn(&S, &mut C) -> Fut
-```
-
-- Unhandled handler from:
-
-```rust
-F: Fn(&S, &E, Arc<C>) -> Fut
-```
-
-to:
-
-```rust
-F: Fn(&S, &E, &mut C) -> Fut
-```
-
-`FsmBuilder::build` continues to construct a single `StateMachine<S, E, C, A>`; no new types are introduced.
-
-#### 4. Remove `Arc<C>` from FSM internals
-
-- `StateMachine` internal fields (transition maps, handlers) no longer require `Arc<C>` in their function signatures.
-- The only remaining `Arc` usage inside the FSM library will be around handler *closures* themselves (to allow cloning, as today), not around the context.
+All existing action types (e.g., `StatefulAction`, `JoinAction`, `JournalSinkAction`, `PipelineAction`) are being updated to mutate the context via `&mut Self::Context` instead of going through `Arc<RwLock<…>>`. `StateMachine` and `FsmBuilder` have been migrated in code to the `&mut Context` API; remaining work is primarily in tests and builder-time validation (described below).
 
 ---
 
