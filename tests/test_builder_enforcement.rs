@@ -1,7 +1,7 @@
 //! This test file demonstrates that StateMachine can only be created via FsmBuilder
 //! It includes examples that would fail to compile if uncommented
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{FsmBuilder, FsmError, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 
 // Test types
 #[derive(Clone, Debug, PartialEq)]
@@ -151,4 +151,70 @@ fn test_reexport_construction_fails() {
 fn test_builder_enforcement_documentation() {
     println!("StateMachine::new is pub(crate) - only FsmBuilder can create instances");
     println!("This enforces proper FSM construction patterns");
+}
+
+#[test]
+fn test_duplicate_handler_detection() {
+    let builder = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done()
+        // Duplicate handler for the same (state, event) pair
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done();
+
+    let result = builder.try_build();
+    assert!(matches!(
+        result,
+        Err(FsmError::DuplicateHandler { state, event })
+            if state == "Start" && event == "Finish"
+    ));
+}
+
+#[test]
+fn test_strict_mode_requires_initial_transitions() {
+    // No transitions or timeouts configured for the initial state
+    let builder =
+        FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+            .strict();
+
+    let result = builder.try_build();
+    assert!(matches!(
+        result,
+        Err(FsmError::BuilderError(msg)) if msg.contains("initial state 'Start'")
+    ));
+}
+
+#[test]
+fn test_strict_mode_allows_valid_initial_state() {
+    let builder = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+        .strict()
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done();
+
+    let result = builder.try_build();
+    assert!(result.is_ok());
 }
