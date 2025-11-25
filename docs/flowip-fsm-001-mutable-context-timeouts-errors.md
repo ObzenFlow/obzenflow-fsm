@@ -1,7 +1,7 @@
 ## FLOWIP-FSM-001: Mutable-Context FSM API, Timeouts, and Errors
 
 **Version target**: obzenflow-fsm `0.2.x`  
-**Status**: In progress (0.2.x implementation underway)
+**Status**: Completed in `obzenflow-fsm` 0.2.x
 
 ### Single Mutable-Context API in `obzenflow_fsm`
 
@@ -176,14 +176,18 @@ All existing action types (e.g., `StatefulAction`, `JoinAction`, `JournalSinkAct
 3. **Timeout refreshing**
    - Refresh `state_timeout` on every transition (including self-transitions) based on the resulting state; clear when no timeout is configured.
 4. **Builder validation**
-   - Error on duplicate `(state, event)` registrations (e.g., `FsmError::DuplicateHandler { state, event }`).
-   - Optionally support a “strict mode” to also validate state/event names against allowlists when provided by the caller.
-5. **Error surfacing and unhandled events**
-   - Public APIs (`handle`, `check_timeout`, `execute_actions`, `build`) return `Result<_, FsmError>`.
-   - Map handler/timeout failures to `FsmError::HandlerError`; add variants for `UnhandledEvent`, `Timeout`, `DuplicateHandler`, etc.
-   - For unhandled events, prefer failing with `FsmError::UnhandledEvent { state, event }` unless the user installs an explicit `when_unhandled` handler that chooses to return `Ok(())`.
+   - Track duplicate `(state, event)` registrations in `FsmBuilder` and make them fail `try_build()` with `FsmError::DuplicateHandler { state, event }`.
+   - Keep `build()` as a convenience wrapper that panics on `FsmError` and forward users to `try_build()` for fallible construction.
+5. **Strict mode**
+   - Add a `strict()` builder modifier that enables additional structural checks at build time:
+     - The initial state must have at least one transition or timeout configured; otherwise `try_build()` returns `FsmError::BuilderError`.
+     - Duplicate handler detection is always active; strict mode is the place to add future invariants (e.g., coverage checks) without changing the default behavior.
+6. **Error surfacing and unhandled events**
+   - Public APIs (`handle`, `check_timeout`, `execute_actions`, `try_build`) return `Result<_, FsmError>`.
+   - Map handler/timeout failures to `FsmError::HandlerError`; use dedicated variants for `UnhandledEvent`, `Timeout`, `DuplicateHandler`, and other configuration issues.
+   - For unhandled events, fail with `FsmError::UnhandledEvent { state, event }` unless the user installs a `when_unhandled` hook that chooses to return `Ok(())`.
    - Keep precedence: specific handler > wildcard > `when_unhandled` hook.
-6. **Telemetry and tracing**
+7. **Telemetry and tracing**
    - Emit structured tracing events for transitions, timeouts firing, handler failures, and unhandled events to aid production debugging.
 
 #### Technical Plan (Timeouts, Errors, Validation)
@@ -256,3 +260,35 @@ Supervisors that need genuine cross-task sharing of specific resources will wrap
   - Remove now-unnecessary `Arc<RwLock<…>>` wrappers for purely local state where possible, relying on 080p‑part‑2 for lock-safety guidance.
 
 This yields a single, coherent ObzenFlow FSM API aligned with FLOWIP‑080p’s “FSM owns and mutates its state” design, without a parallel Arc-based path.
+
+---
+
+### Implementation Status and Next Steps
+
+**Implemented in `obzenflow-fsm` 0.2.x**
+
+- Single `&mut Context` FSM API:
+  - `StateMachine::handle`, `check_timeout`, `execute_actions` now operate on `&mut Context`.
+  - `FsmAction::execute(&self, &mut Context) -> FsmResult<()>` is the only action API.
+- Timeout and transition semantics:
+  - Initial-state timeouts are scheduled in `StateMachine::new` when configured.
+  - Self-transitions run exit/entry hooks and refresh or clear the timeout based on the resulting state.
+- Error model:
+  - Public APIs return `FsmResult<_>` with `FsmError` variants (`HandlerError`, `UnhandledEvent`, `Timeout`, `DuplicateHandler`, `BuilderError`, …).
+  - Handler/timeout failures are mapped into `HandlerError` rather than raw `String`.
+- Builder validation:
+  - `FsmBuilder::try_build` fails with `FsmError::DuplicateHandler` on duplicate `(state, event)` registrations.
+  - `FsmBuilder::strict()` enables an extra check that the initial state has at least one transition or timeout; otherwise `try_build` returns `FsmError::BuilderError`.
+  - `FsmBuilder::build` remains as a panicking convenience wrapper around `try_build`.
+- Tests:
+  - All tests and examples have been migrated to `&mut Context` and the new error model.
+  - Focused tests cover duplicate detection and strict-mode behavior.
+
+**Next steps (beyond 001)**
+
+- Runtime adoption:
+  - Ensure all ObzenFlow runtime supervisors and FSM integrations are consistently using the 0.2 `&mut Context` API, removing any remaining `Arc<C>`-style usage except where genuinely shared resources are required.
+- Additional validation (potential follow-up FlowIP):
+  - Consider extending strict mode with more invariants once the macro DSL from `flowip-fsm-002-builder-dsl.md` is in place (e.g., coverage checks per state, validation of known state/event sets).
+- DSL front-end:
+  - Implement the `fsm!` builder DSL described in FLOWIP‑FSM‑002 to make FSM definitions enum-centric while leveraging the 0.2 core semantics from this FlowIP.

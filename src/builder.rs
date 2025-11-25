@@ -15,6 +15,10 @@ pub struct FsmBuilder<S, E, C, A> {
     entry_handlers: HashMap<String, StateHandler<S, C, A>>,
     exit_handlers: HashMap<String, StateHandler<S, C, A>>,
     timeout_handlers: HashMap<String, (Duration, TimeoutHandler<S, C, A>)>,
+    /// Duplicate (state, event) handlers detected during configuration
+    duplicate_handlers: Vec<(String, String)>,
+    /// When true, apply additional validation at build time
+    strict_validation: bool,
     unhandled_handler: Option<
         Arc<
             dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>>
@@ -40,9 +44,21 @@ where
             entry_handlers: HashMap::new(),
             exit_handlers: HashMap::new(),
             timeout_handlers: HashMap::new(),
+            duplicate_handlers: Vec::new(),
+            strict_validation: false,
             unhandled_handler: None,
             _phantom: PhantomData,
         }
+    }
+
+    /// Enable strict validation at build time.
+    ///
+    /// In strict mode, `try_build` will:
+    /// - Fail on any detected duplicate `(state, event)` handler, and
+    /// - Require that the initial state has at least one transition or timeout.
+    pub fn strict(mut self) -> Self {
+        self.strict_validation = true;
+        self
     }
 
     /// Start defining behavior for a specific state
@@ -94,16 +110,52 @@ where
         self
     }
 
-    /// Build the final state machine
+    /// Build the final state machine, panicking on builder errors.
+    ///
+    /// For fallible construction, use `try_build` instead.
     pub fn build(self) -> StateMachine<S, E, C, A> {
-        StateMachine::new(
+        match self.try_build() {
+            Ok(machine) => machine,
+            Err(err) => panic!("FsmBuilder::build failed: {err}"),
+        }
+    }
+
+    /// Build the final state machine, returning a `FsmResult`.
+    pub fn try_build(self) -> FsmResult<StateMachine<S, E, C, A>> {
+        // 1) Duplicate handler validation
+        if let Some((state, event)) = self.duplicate_handlers.first() {
+            return Err(crate::error::FsmError::DuplicateHandler {
+                state: state.clone(),
+                event: event.clone(),
+            });
+        }
+
+        // 2) Strict-mode structural checks
+        if self.strict_validation {
+            let initial_state_name = self.initial_state.variant_name().to_string();
+
+            let has_transition = self
+                .transitions
+                .keys()
+                .any(|(state_name, _)| state_name == &initial_state_name);
+            let has_timeout = self.timeout_handlers.contains_key(&initial_state_name);
+
+            if !has_transition && !has_timeout {
+                return Err(crate::error::FsmError::BuilderError(format!(
+                    "No transitions or timeout configured for initial state '{}'",
+                    initial_state_name
+                )));
+            }
+        }
+
+        Ok(StateMachine::new(
             self.initial_state,
             self.transitions,
             self.entry_handlers,
             self.exit_handlers,
             self.timeout_handlers,
             self.unhandled_handler,
-        )
+        ))
     }
 }
 
@@ -125,10 +177,15 @@ where
     where
         F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
     {
-        self.builder.transitions.insert(
-            (self.state_name.clone(), event_name.to_string()),
-            Arc::new(move |s, e, c| handler(s, e, c)),
-        );
+        let key = (self.state_name.clone(), event_name.to_string());
+        if self.builder.transitions.contains_key(&key) {
+            self.builder
+                .duplicate_handlers
+                .push((key.0.clone(), key.1.clone()));
+        }
+        self.builder
+            .transitions
+            .insert(key, Arc::new(move |s, e, c| handler(s, e, c)));
         self
     }
 
