@@ -14,7 +14,7 @@ categories = ["asynchronous", "data-structures", "algorithms"]
 publish = true
 
 [dependencies]
-# Core dependencies only - no dependencies on other obzenflow crates
+# Core dependencies only - no dependencies on other ObzenFlow crates
 async-trait = "0.1"
 tokio = { version = "1.35", features = ["rt", "macros", "time"] }
 tracing = "0.1"
