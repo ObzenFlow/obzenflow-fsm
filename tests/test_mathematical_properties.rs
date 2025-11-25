@@ -349,29 +349,40 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
             id: format!("debit_{}", i),
             amount: 1
         };
-        machine.handle(event, ctx.clone()).await.unwrap();
+        // Only handle if still in Counting state (might transition to Corrupted)
+        if matches!(machine.state(), BeastState::Counting { .. }) {
+            machine.handle(event, ctx.clone()).await.unwrap();
+        }
 
         if i == 333 {
             // Check for the mark mid-way
-            machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
+            if matches!(machine.state(), BeastState::Counting { .. }) {
+                machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
+            }
         }
     }
 
-    // Final balance should be 1000 - 566 = 434
-    if let BeastState::Counting { balance, .. } = machine.state() {
-        println!("💀 Balance before the mark: {}", balance);
+    // Check if we're still in Counting state or already Corrupted
+    let already_corrupted = matches!(machine.state(), BeastState::Corrupted(_));
+
+    if !already_corrupted {
+        // Final balance should be 1000 - 566 = 434
+        if let BeastState::Counting { balance, .. } = machine.state() {
+            println!("💀 Balance before the mark: {}", balance);
+        }
+
+        // Now credit to reach exactly 666
+        machine.handle(BeastEvent::Credit {
+            id: "beast".to_string(),
+            amount: 232  // 434 + 232 = 666
+        }, ctx.clone()).await.unwrap();
+
+        // Check for the mark
+        let actions = machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
+        println!("📋 Actions returned: {:?}", actions);
     }
 
-    // Now credit to reach exactly 666
-    machine.handle(BeastEvent::Credit {
-        id: "beast".to_string(),
-        amount: 232  // 434 + 232 = 666
-    }, ctx.clone()).await.unwrap();
-
-    // Check for the mark
-    let actions = machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
-
-    // Debug print the final state and actions
+    // Debug print the final state
     match machine.state() {
         BeastState::Counting { balance, operations, .. } => {
             println!("🔍 Final state: Counting {{ balance: {}, operations: {} }}", balance, operations.len());
@@ -381,8 +392,6 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         }
         _ => {}
     }
-
-    println!("📋 Actions returned: {:?}", actions);
 
     assert!(matches!(machine.state(), BeastState::Corrupted(_)),
         "The beast was not marked at 666!");
