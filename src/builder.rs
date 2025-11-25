@@ -2,11 +2,9 @@
 
 use crate::handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 use crate::machine::StateMachine;
-use crate::types::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use crate::types::{BoxFuture, FsmAction, FsmContext, FsmResult, StateVariant, EventVariant, Transition};
 use std::collections::HashMap;
-use std::future::Future;
 use std::marker::PhantomData;
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -19,7 +17,7 @@ pub struct FsmBuilder<S, E, C, A> {
     timeout_handlers: HashMap<String, (Duration, TimeoutHandler<S, C, A>)>,
     unhandled_handler: Option<
         Arc<
-            dyn Fn(&S, &E, Arc<C>) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+            dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>>
                 + Send
                 + Sync,
         >,
@@ -64,37 +62,34 @@ where
     }
 
     /// Define handler for unhandled events
-    pub fn when_unhandled<F, Fut>(mut self, handler: F) -> Self
+    pub fn when_unhandled<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&S, &E, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync + 'static,
     {
-        self.unhandled_handler = Some(Arc::new(move |s, e, c| Box::pin(handler(s, e, c))));
+        self.unhandled_handler = Some(Arc::new(move |s, e, c| handler(s, e, c)));
         self
     }
 
     /// Define entry handler for a state
-    pub fn on_entry<F, Fut>(mut self, state_name: &str, handler: F) -> Self
+    pub fn on_entry<F>(mut self, state_name: &str, handler: F) -> Self
     where
-        F: Fn(&S, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Vec<A>, String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
     {
         self.entry_handlers.insert(
             state_name.to_string(),
-            Arc::new(move |s, c: Arc<C>| Box::pin(handler(s, c))),
+            Arc::new(move |s, c| handler(s, c)),
         );
         self
     }
 
     /// Define exit handler for a state
-    pub fn on_exit<F, Fut>(mut self, state_name: &str, handler: F) -> Self
+    pub fn on_exit<F>(mut self, state_name: &str, handler: F) -> Self
     where
-        F: Fn(&S, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Vec<A>, String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
     {
         self.exit_handlers.insert(
             state_name.to_string(),
-            Arc::new(move |s, c: Arc<C>| Box::pin(handler(s, c))),
+            Arc::new(move |s, c| handler(s, c)),
         );
         self
     }
@@ -126,32 +121,26 @@ where
     A: FsmAction<Context = C> + 'static,
 {
     /// Define a transition for a specific event
-    pub fn on<F, Fut>(mut self, event_name: &str, handler: F) -> Self
+    pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
-        F: Fn(&S, &E, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Transition<S, A>, String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
     {
         self.builder.transitions.insert(
             (self.state_name.clone(), event_name.to_string()),
-            Arc::new(move |s, e, c: Arc<C>| Box::pin(handler(s, e, c))),
+            Arc::new(move |s, e, c| handler(s, e, c)),
         );
         self
     }
 
     /// Define a timeout for this state
-    pub fn timeout<F, Fut>(
-        self,
-        duration: Duration,
-        handler: F,
-    ) -> TimeoutBuilder<S, E, C, A>
+    pub fn timeout<F>(self, duration: Duration, handler: F) -> TimeoutBuilder<S, E, C, A>
     where
-        F: Fn(&S, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Transition<S, A>, String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
     {
         let mut builder = self.builder;
         builder.timeout_handlers.insert(
             self.state_name.clone(),
-            (duration, Arc::new(move |s, c: Arc<C>| Box::pin(handler(s, c)))),
+            (duration, Arc::new(move |s, c| handler(s, c))),
         );
         TimeoutBuilder {
             builder,
@@ -179,14 +168,13 @@ where
     A: FsmAction<Context = C> + 'static,
 {
     /// Define a transition for a specific event
-    pub fn on<F, Fut>(mut self, event_name: &str, handler: F) -> Self
+    pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
-        F: Fn(&S, &E, Arc<C>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Transition<S, A>, String>> + Send + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
     {
         self.builder.transitions.insert(
             (self.state_name.clone(), event_name.to_string()),
-            Arc::new(move |s, e, c: Arc<C>| Box::pin(handler(s, e, c))),
+            Arc::new(move |s, e, c| handler(s, e, c)),
         );
         self
     }
@@ -292,7 +280,7 @@ mod tests {
     impl crate::FsmAction for DoorAction {
         type Context = DoorContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> crate::types::FsmResult<()> {
             match self {
                 DoorAction::Ring => {
                     println!("Ring!");
@@ -310,65 +298,77 @@ mod tests {
     async fn test_door_fsm() {
         let fsm = FsmBuilder::<DoorState, DoorEvent, DoorContext, DoorAction>::new(DoorState::Closed)
             .when("Closed")
-                .on("Open", |_state: &DoorState, _event: &DoorEvent, _ctx: Arc<DoorContext>| async {
-                    Ok(Transition {
-                        next_state: DoorState::Open {
-                            since: std::time::Instant::now(),
-                        },
-                        actions: vec![DoorAction::Ring, DoorAction::Log("Door opened".into())],
+                .on("Open", |_state: &DoorState, _event: &DoorEvent, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: DoorState::Open {
+                                since: std::time::Instant::now(),
+                            },
+                            actions: vec![DoorAction::Ring, DoorAction::Log("Door opened".into())],
+                        })
                     })
                 })
                 .done()
             .when("Closed")
-                .on("Lock", |_state: &DoorState, _event: &DoorEvent, _ctx: Arc<DoorContext>| async {
-                    Ok(Transition {
-                        next_state: DoorState::Locked,
-                        actions: vec![DoorAction::Log("Door locked".into())],
+                .on("Lock", |_state: &DoorState, _event: &DoorEvent, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: DoorState::Locked,
+                            actions: vec![DoorAction::Log("Door locked".into())],
+                        })
                     })
                 })
                 .done()
-            .when("Open")
-                .timeout(Duration::from_secs(5), |_state: &DoorState, _ctx: Arc<DoorContext>| async {
-                    Ok(Transition {
-                        next_state: DoorState::Closed,
-                        actions: vec![DoorAction::Log("Door auto-closed".into())],
+                .when("Open")
+                .timeout(Duration::from_secs(5), |_state: &DoorState, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: DoorState::Closed,
+                            actions: vec![DoorAction::Log("Door auto-closed".into())],
+                        })
                     })
                 })
-                .on("Close", |_state: &DoorState, _event: &DoorEvent, _ctx: Arc<DoorContext>| async {
-                    Ok(Transition {
-                        next_state: DoorState::Closed,
-                        actions: vec![DoorAction::Log("Door closed".into())],
+                .on("Close", |_state: &DoorState, _event: &DoorEvent, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: DoorState::Closed,
+                            actions: vec![DoorAction::Log("Door closed".into())],
+                        })
                     })
                 })
                 .done()
             .when("Locked")
-                .on("Unlock", |_state: &DoorState, _event: &DoorEvent, _ctx: Arc<DoorContext>| async {
-                    Ok(Transition {
-                        next_state: DoorState::Closed,
-                        actions: vec![DoorAction::Log("Door unlocked".into())],
+                .on("Unlock", |_state: &DoorState, _event: &DoorEvent, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: DoorState::Closed,
+                            actions: vec![DoorAction::Log("Door unlocked".into())],
+                        })
                     })
                 })
                 .done()
-            .on_entry("Open", |_state: &DoorState, _ctx: Arc<DoorContext>| async {
-                Ok(vec![DoorAction::Log("Entering Open state".into())])
+            .on_entry("Open", |_state: &DoorState, _ctx: &mut DoorContext| {
+                Box::pin(async move {
+                    Ok(vec![DoorAction::Log("Entering Open state".into())])
+                })
             })
-            .when_unhandled(|state: &DoorState, event: &DoorEvent, _ctx: Arc<DoorContext>| {
-                let state = state.clone();
-                let event = event.clone();
-                async move {
-                    tracing::warn!("Unhandled event {:?} in state {:?}", event, state);
-                    Ok(())
-                }
-            })
+            .when_unhandled(
+                |state: &DoorState, event: &DoorEvent, _ctx: &mut DoorContext| {
+                    Box::pin(async move {
+                        tracing::warn!("Unhandled event {:?} in state {:?}", event, state);
+                        Ok(())
+                    })
+                },
+            )
             .build();
 
         let mut door = fsm;
-        let ctx = Arc::new(DoorContext);
+        let mut ctx = DoorContext;
 
         // Test basic transition
         assert!(matches!(door.state(), DoorState::Closed));
 
-        let actions = door.handle(DoorEvent::Open, ctx.clone()).await.unwrap();
+        let actions = door.handle(DoorEvent::Open, &mut ctx).await.unwrap();
         // Now we should get: entry handler action + transition actions
         assert_eq!(actions.len(), 3);
         assert!(matches!(actions[0], DoorAction::Log(_))); // Entry handler
@@ -377,7 +377,7 @@ mod tests {
         assert!(matches!(door.state(), DoorState::Open { .. }));
 
         // Test another transition - this should work
-        let actions = door.handle(DoorEvent::Close, ctx).await.unwrap();
+        let actions = door.handle(DoorEvent::Close, &mut ctx).await.unwrap();
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], DoorAction::Log(_)));
         assert!(matches!(door.state(), DoorState::Closed));

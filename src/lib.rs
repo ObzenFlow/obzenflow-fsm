@@ -24,7 +24,6 @@ pub use handlers::{TransitionHandler, StateHandler, TimeoutHandler};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use async_trait::async_trait;
 
     #[derive(Clone, Debug, PartialEq)]
@@ -81,7 +80,7 @@ mod tests {
     impl FsmAction for TestAction {
         type Context = TestContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> crate::types::FsmResult<()> {
             match self {
                 TestAction::Log(msg) => {
                     println!("Log: {}", msg);
@@ -99,20 +98,25 @@ mod tests {
     async fn test_basic_fsm() {
         let fsm = FsmBuilder::<TestState, TestEvent, TestContext, TestAction>::new(TestState::Idle)
             .when("Idle")
-            .on("Start", |_state: &TestState, _event: &TestEvent, _ctx: Arc<TestContext>| async {
-                Ok(Transition {
-                    next_state: TestState::Active { count: 0 },
-                    actions: vec![TestAction::Log("Starting".into())],
-                })
-            })
+            .on(
+                "Start",
+                |_state: &TestState, _event: &TestEvent, _ctx: &mut TestContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: TestState::Active { count: 0 },
+                            actions: vec![TestAction::Log("Starting".into())],
+                        })
+                    })
+                },
+            )
             .done()
             .build();
 
         let mut state_machine = fsm;
-        let ctx = Arc::new(TestContext { total: 0 });
+        let mut ctx = TestContext { total: 0 };
         
         // Test transition
-        let actions = state_machine.handle(TestEvent::Start, ctx).await.unwrap();
+        let actions = state_machine.handle(TestEvent::Start, &mut ctx).await.unwrap();
         assert_eq!(actions.len(), 1);
         assert!(matches!(state_machine.state(), TestState::Active { count: 0 }));
     }

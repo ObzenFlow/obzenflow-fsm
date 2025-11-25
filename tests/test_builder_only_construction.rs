@@ -2,7 +2,6 @@
 //! This test will fail to compile if StateMachine::new becomes public
 
 use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
-use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 enum TestState {
@@ -49,8 +48,8 @@ impl FsmContext for TestContext {
 #[async_trait::async_trait]
 impl FsmAction for TestAction {
     type Context = TestContext;
-    
-    async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+    async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         Ok(())
     }
 }
@@ -60,13 +59,15 @@ fn test_builder_is_only_way_to_create_state_machine() {
     // This should compile - using the builder
     let _fsm = FsmBuilder::<TestState, TestEvent, TestContext, TestAction>::new(TestState::Initial)
         .when("Initial")
-            .on("Go", |_state, _event: &TestEvent, _ctx: Arc<TestContext>| async {
+        .on("Go", |_state, _event: &TestEvent, _ctx: &mut TestContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: TestState::Final,
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
 
     // The following should NOT compile if we've done our job correctly

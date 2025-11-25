@@ -58,8 +58,8 @@ impl FsmContext for EmptyContext {}
 #[async_trait::async_trait]
 impl FsmAction for NoAction {
     type Context = EmptyContext;
-    
-    async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+    async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         Ok(())
     }
 }
@@ -81,55 +81,54 @@ async fn test_deeply_nested_state() {
 
     let fsm = FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 { data: initial_data })
         .when("Level1")
-            .on("Transform", |state, _event, _ctx| {
-                let data = match state {
-                    NestedState::Level1 { data } => data.clone(),
-                    _ => unreachable!(),
-                };
-                
-                async move {
-                    // Transform nested data into matrix
-                    let mut matrix = vec![];
-                    for (_key, values) in data {
-                        for opt in values {
-                            if let Some(inner) = opt {
-                                // Convert f64 values to u32
-                                let u32_values: Vec<u32> = inner.values.iter()
-                                    .map(|&v| v as u32)
-                                    .collect();
-                                matrix.push(vec![u32_values]);
-                            }
+        .on("Transform", |state, _event, _ctx: &mut EmptyContext| {
+            let data = match state {
+                NestedState::Level1 { data } => data.clone(),
+                _ => unreachable!(),
+            };
+
+            Box::pin(async move {
+                // Transform nested data into matrix
+                let mut matrix = vec![];
+                for (_key, values) in data {
+                    for opt in values {
+                        if let Some(inner) = opt {
+                            // Convert f64 values to u32
+                            let u32_values: Vec<u32> = inner.values.iter().map(|&v| v as u32).collect();
+                            matrix.push(vec![u32_values]);
                         }
                     }
-                    
-                    Ok(Transition {
-                        next_state: NestedState::Level2 {
-                            matrix,
-                        },
-                        actions: vec![],
-                    })
                 }
+
+                Ok(Transition {
+                    next_state: NestedState::Level2 { matrix },
+                    actions: vec![],
+                })
             })
-            .done()
+        })
+        .done()
         .when("Level2")
-            .on("Mutate", |state, _event, _ctx| {
-                let next_state = state.clone();
-                // Since we removed metadata, this is now a no-op
-                async move {
-                    Ok(Transition {
-                        next_state,
-                        actions: vec![],
-                    })
-                }
+        .on("Mutate", |state, _event, _ctx: &mut EmptyContext| {
+            let next_state = state.clone();
+            // Since we removed metadata, this is now a no-op
+            Box::pin(async move {
+                Ok(Transition {
+                    next_state,
+                    actions: vec![],
+                })
             })
-            .done()
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(EmptyContext);
+    let mut ctx = EmptyContext;
 
     // Transform to Level2
-    machine.handle(NestedEvent::Transform, ctx.clone()).await.unwrap();
+    machine
+        .handle(NestedEvent::Transform, &mut ctx)
+        .await
+        .unwrap();
     
     // Verify transformation
     if let NestedState::Level2 { matrix } = machine.state() {
@@ -138,13 +137,16 @@ async fn test_deeply_nested_state() {
         assert_eq!(matrix[0][0], vec![1, 2, 3]); // Now u32 values
         
         // Mutate doesn't apply to Level2 anymore since we removed metadata
-        machine.handle(
-            NestedEvent::Mutate {
-                key: "test".to_string(),
-                value: "value".to_string(),
-            },
-            ctx.clone()
-        ).await.unwrap();
+        machine
+            .handle(
+                NestedEvent::Mutate {
+                    key: "test".to_string(),
+                    value: "value".to_string(),
+                },
+                &mut ctx,
+            )
+            .await
+            .unwrap();
     } else {
         panic!("Expected Level2 state");
     }
@@ -190,39 +192,43 @@ async fn test_zero_sized_types() {
     impl FsmAction for ZstAction {
         type Context = ZstContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
     let fsm = FsmBuilder::new(ZstState::Empty)
         .when("Empty")
-            .on("ZstEvent", |_state, _event, _ctx| async {
+        .on("ZstEvent", |_state, _event, _ctx: &mut ZstContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: ZstState::AlsoEmpty,
                     actions: vec![ZstAction],
                 })
             })
-            .done()
+        })
+        .done()
         .when("AlsoEmpty")
-            .on("ZstEvent", |_state, _event, _ctx| async {
+        .on("ZstEvent", |_state, _event, _ctx: &mut ZstContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: ZstState::WithPhantom(std::marker::PhantomData),
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(ZstContext);
+    let mut ctx = ZstContext;
 
     // Test transitions with ZSTs
-    let actions = machine.handle(ZstEvent, ctx.clone()).await.unwrap();
+    let actions = machine.handle(ZstEvent, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(machine.state(), ZstState::AlsoEmpty));
 
-    machine.handle(ZstEvent, ctx).await.unwrap();
+    machine.handle(ZstEvent, &mut ctx).await.unwrap();
     assert!(matches!(machine.state(), ZstState::WithPhantom(_)));
 }
 
@@ -290,7 +296,7 @@ async fn test_complex_async_handlers() {
     impl FsmAction for AsyncAction {
         type Context = AsyncContext;
         
-        async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 AsyncAction::SpawnTasks(count) => {
                     ctx.external_service.write().await.push(format!("Spawning {} tasks", count));
@@ -310,153 +316,176 @@ async fn test_complex_async_handlers() {
 
     let fsm = FsmBuilder::new(AsyncState::Idle)
         .when("Idle")
-            .on("StartWork", |_state, event, ctx: Arc<AsyncContext>| {
-                let task_count = match event {
-                    AsyncEvent::StartWork { task_count } => task_count.clone(),
-                    _ => unreachable!(),
-                };
-                
-                let external_service = ctx.external_service.clone();
-                
-                async move {
-                    // Simulate complex async operations
-                    let handles: Vec<_> = (0..3).map(|i| {
+        .on("StartWork", |_state, event, ctx: &mut AsyncContext| {
+            let task_count = match event {
+                AsyncEvent::StartWork { task_count } => *task_count,
+                _ => unreachable!(),
+            };
+
+            let external_service = ctx.external_service.clone();
+
+            Box::pin(async move {
+                // Simulate complex async operations
+                let handles: Vec<_> = (0..3)
+                    .map(|i| {
                         let service = external_service.clone();
                         tokio::spawn(async move {
                             sleep(Duration::from_millis(10)).await;
-                            service.write().await.push(format!("Task {} initialized", i));
+                            service
+                                .write()
+                                .await
+                                .push(format!("Task {} initialized", i));
                         })
-                    }).collect();
-                    
-                    // Wait for all initialization tasks
-                    for handle in handles {
-                        handle.await.map_err(|e| e.to_string())?;
-                    }
-                    
-                    // Perform some CPU-bound work
-                    let parallel_tasks: Vec<String> = (0..task_count)
-                        .map(|i| format!("Task-{}", i))
-                        .collect();
-                    
-                    Ok(Transition {
-                        next_state: AsyncState::Working {
-                            tasks_completed: 0,
-                            parallel_tasks,
-                        },
-                        actions: vec![AsyncAction::SpawnTasks(task_count)],
                     })
+                    .collect();
+
+                // Wait for all initialization tasks
+                for handle in handles {
+                    handle
+                        .await
+                        .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 }
+
+                // Perform some CPU-bound work
+                let parallel_tasks: Vec<String> =
+                    (0..task_count).map(|i| format!("Task-{}", i)).collect();
+
+                Ok(Transition {
+                    next_state: AsyncState::Working {
+                        tasks_completed: 0,
+                        parallel_tasks,
+                    },
+                    actions: vec![AsyncAction::SpawnTasks(task_count)],
+                })
             })
-            .done()
-        
+        })
+        .done()
         .when("Working")
-            .on("ProcessBatch", |state, event, ctx| {
-                let (tasks_completed, mut parallel_tasks) = match state {
-                    AsyncState::Working { tasks_completed, parallel_tasks } => 
-                        (*tasks_completed, parallel_tasks.clone()),
-                    _ => unreachable!(),
-                };
-                
-                let batch_size = match event {
-                    AsyncEvent::ProcessBatch { batch_size } => batch_size.clone() as usize,
-                    _ => unreachable!(),
-                };
-                
-                let external_service = ctx.external_service.clone();
-                
-                async move {
-                    // Process batch with timeout
-                    let result = timeout(Duration::from_secs(1), async {
-                        let batch: Vec<_> = parallel_tasks
-                            .drain(..batch_size.min(parallel_tasks.len()))
-                            .collect();
-                        
-                        // Simulate processing each item
-                        for task in &batch {
-                            sleep(Duration::from_millis(5)).await;
-                            external_service.write().await.push(format!("Processed: {}", task));
-                        }
-                        
-                        batch.len() as u32
-                    }).await;
-                    
-                    match result {
-                        Ok(processed) => {
-                            let new_completed = tasks_completed + processed;
-                            let progress = if parallel_tasks.is_empty() {
-                                100.0
-                            } else {
-                                (new_completed as f32 / (new_completed + parallel_tasks.len() as u32) as f32) * 100.0
-                            };
-                            
-                            Ok(Transition {
-                                next_state: AsyncState::Working {
-                                    tasks_completed: new_completed,
-                                    parallel_tasks,
-                                },
-                                actions: vec![AsyncAction::UpdateProgress(progress)],
-                            })
-                        }
-                        Err(_) => Err("Processing timeout".to_string()),
+        .on("ProcessBatch", |state, event, ctx: &mut AsyncContext| {
+            let (tasks_completed, mut parallel_tasks) = match state {
+                AsyncState::Working {
+                    tasks_completed,
+                    parallel_tasks,
+                } => (*tasks_completed, parallel_tasks.clone()),
+                _ => unreachable!(),
+            };
+
+            let batch_size = match event {
+                AsyncEvent::ProcessBatch { batch_size } => *batch_size as usize,
+                _ => unreachable!(),
+            };
+
+            let external_service = ctx.external_service.clone();
+
+            Box::pin(async move {
+                // Process batch with timeout
+                let result = timeout(Duration::from_secs(1), async {
+                    let batch: Vec<_> = parallel_tasks
+                        .drain(..batch_size.min(parallel_tasks.len()))
+                        .collect();
+
+                    // Simulate processing each item
+                    for task in &batch {
+                        sleep(Duration::from_millis(5)).await;
+                        external_service
+                            .write()
+                            .await
+                            .push(format!("Processed: {}", task));
                     }
+
+                    batch.len() as u32
+                })
+                .await;
+
+                match result {
+                    Ok(processed) => {
+                        let new_completed = tasks_completed + processed;
+                        let progress = if parallel_tasks.is_empty() {
+                            100.0
+                        } else {
+                            (new_completed as f32
+                                / (new_completed + parallel_tasks.len() as u32) as f32)
+                                * 100.0
+                        };
+
+                        Ok(Transition {
+                            next_state: AsyncState::Working {
+                                tasks_completed: new_completed,
+                                parallel_tasks,
+                            },
+                            actions: vec![AsyncAction::UpdateProgress(progress)],
+                        })
+                    }
+                    Err(_) => Err(obzenflow_fsm::FsmError::HandlerError(
+                        "Processing timeout".to_string(),
+                    )),
                 }
             })
-            .on("FinishWork", |state, _event, ctx| {
-                let tasks_completed = match state {
-                    AsyncState::Working { tasks_completed, .. } => tasks_completed.clone(),
-                    _ => unreachable!(),
-                };
-                
-                let duration_ms = ctx.start_time.elapsed().as_millis() as u64;
-                
-                async move {
-                    // Generate final report
-                    let report = format!(
-                        "Completed {} tasks in {}ms",
-                        tasks_completed,
-                        duration_ms
-                    );
-                    
-                    Ok(Transition {
-                        next_state: AsyncState::Completed {
-                            total_tasks: tasks_completed,
-                            duration_ms,
-                        },
-                        actions: vec![AsyncAction::GenerateReport(report)],
-                    })
-                }
+        })
+        .on("FinishWork", |state, _event, ctx: &mut AsyncContext| {
+            let tasks_completed = match state {
+                AsyncState::Working { tasks_completed, .. } => *tasks_completed,
+                AsyncState::Completed { total_tasks, .. } => *total_tasks,
+                _ => 0,
+            };
+
+            let duration_ms = ctx.start_time.elapsed().as_millis() as u64;
+
+            Box::pin(async move {
+                // Generate final report
+                let report = format!(
+                    "Completed {} tasks in {}ms",
+                    tasks_completed, duration_ms
+                );
+
+                Ok(Transition {
+                    next_state: AsyncState::Completed {
+                        total_tasks: tasks_completed,
+                        duration_ms,
+                    },
+                    actions: vec![AsyncAction::GenerateReport(report)],
+                })
             })
-            .done()
-        
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(AsyncContext {
+    let mut ctx = AsyncContext {
         start_time: std::time::Instant::now(),
         external_service: Arc::new(RwLock::new(Vec::new())),
-    });
+    };
 
     // Start work
-    machine.handle(
-        AsyncEvent::StartWork { task_count: 10 },
-        ctx.clone()
-    ).await.unwrap();
+    machine
+        .handle(
+            AsyncEvent::StartWork { task_count: 10 },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
 
     // Process in batches
     for _ in 0..3 {
-        let actions = machine.handle(
-            AsyncEvent::ProcessBatch { batch_size: 3 },
-            ctx.clone()
-        ).await.unwrap();
-        
+        let actions = machine
+            .handle(
+                AsyncEvent::ProcessBatch { batch_size: 3 },
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AsyncAction::UpdateProgress(_)));
     }
 
     // Finish
-    let actions = machine.handle(AsyncEvent::FinishWork, ctx.clone()).await.unwrap();
+    let actions = machine
+        .handle(AsyncEvent::FinishWork, &mut ctx)
+        .await
+        .unwrap();
     assert!(matches!(actions[0], AsyncAction::GenerateReport(_)));
-    
+
     // Verify external service was called
     let service_logs = ctx.external_service.read().await;
     assert!(service_logs.len() > 10); // Init tasks + processed tasks
@@ -526,47 +555,61 @@ async fn test_state_equality_edge_cases() {
     impl FsmAction for FloatAction {
         type Context = FloatContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
     let fsm = FsmBuilder::new(FloatState::Normal { value: 1.0 })
         .when("Normal")
-            .on("MakeNan", |_state, _event, _ctx| async {
+        .on("MakeNan", |_state, _event, _ctx: &mut FloatContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: FloatState::WithNan { value: NAN },
                     actions: vec![],
                 })
             })
-            .on("MakeInfinity", |_state, _event, _ctx| async {
+        })
+        .on("MakeInfinity", |_state, _event, _ctx: &mut FloatContext| {
+            Box::pin(async {
                 Ok(Transition {
-                    next_state: FloatState::WithInfinity { value: f64::INFINITY },
+                    next_state: FloatState::WithInfinity {
+                        value: f64::INFINITY,
+                    },
                     actions: vec![],
                 })
             })
-            .done()
+        })
+        .done()
         .from_any()
-            .on("Normalize", |_state, _event, _ctx| async {
+        .on("Normalize", |_state, _event, _ctx: &mut FloatContext| {
+            Box::pin(async {
                 Ok(Transition {
                     next_state: FloatState::Normal { value: 0.0 },
                     actions: vec![FloatAction],
                 })
             })
-            .done()
+        })
+        .done()
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(FloatContext);
+    let mut ctx = FloatContext;
 
     // Test NaN handling
-    machine.handle(FloatEvent::MakeNan, ctx.clone()).await.unwrap();
+    machine
+        .handle(FloatEvent::MakeNan, &mut ctx)
+        .await
+        .unwrap();
     if let FloatState::WithNan { value } = machine.state() {
         assert!(value.is_nan());
     }
 
     // Test normalizing from NaN state
-    let actions = machine.handle(FloatEvent::Normalize, ctx).await.unwrap();
+    let actions = machine
+        .handle(FloatEvent::Normalize, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 1); // Actions still execute even if state doesn't change
 }
 
@@ -633,12 +676,13 @@ async fn test_many_states() {
     impl FsmAction for Transition_ {
         type Context = EmptyCtx;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
-    let mut builder = FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
+    let mut builder =
+        FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
     
     // Add transitions for each state
     for i in 0..9 {
@@ -658,14 +702,14 @@ async fn test_many_states() {
         
         builder = builder
             .when(&state_name)
-            .on("Next", move |_state, _event, _ctx| {
+            .on("Next", move |_state, _event, _ctx: &mut EmptyCtx| {
                 let next = next_state.clone();
-                async move {
+                Box::pin(async move {
                     Ok(Transition {
                         next_state: next,
                         actions: vec![],
                     })
-                }
+                })
             })
             .done();
     }
@@ -673,20 +717,22 @@ async fn test_many_states() {
     // Add reset from any state
     builder = builder
         .from_any()
-        .on("Reset", |_state, _event, _ctx| async {
-            Ok(Transition {
-                next_state: ManyStates::State0,
-                actions: vec![],
+        .on("Reset", |_state, _event, _ctx: &mut EmptyCtx| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: ManyStates::State0,
+                    actions: vec![],
+                })
             })
         })
         .done();
     
     let mut machine = builder.build();
-    let ctx = Arc::new(EmptyCtx);
+    let mut ctx = EmptyCtx;
 
     // Test sequential transitions
     for expected in 1..=9 {
-        machine.handle(ManyEvents::Next, ctx.clone()).await.unwrap();
+        machine.handle(ManyEvents::Next, &mut ctx).await.unwrap();
         let state_num = match machine.state() {
             ManyStates::State1 => 1,
             ManyStates::State2 => 2,
@@ -703,7 +749,7 @@ async fn test_many_states() {
     }
 
     // Test reset from any state
-    machine.handle(ManyEvents::Reset, ctx).await.unwrap();
+    machine.handle(ManyEvents::Reset, &mut ctx).await.unwrap();
     assert!(matches!(machine.state(), ManyStates::State0));
 }
 
