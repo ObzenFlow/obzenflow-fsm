@@ -2,6 +2,11 @@
 
 Finite State Machines are at the heart of how ObzenFlow works. This is our own custom implementation of a **Mealy machine**, that makes intention tradeoffs to support async closures for the right balance between correctness and architectural flexibility. Flexibility is required due to ObzenFlow's extremely expressive middleware and monitoring systems. 
 
+## Project Naming
+
+- **ObzenFlow** is the main workflow/orchestration project and overall system.
+- **ObzenFlow FSM** is this reusable finite state machine library that powers ObzenFlow, published as the Rust crate `obzenflow-fsm`.
+
 This FSM library requires contexts to be wrapped in `Arc`. This is a deliberate design choice to support:
 
 1. **Async closures** - Handlers are async blocks that need to own their data (primary reason)
@@ -136,7 +141,7 @@ The bottom line: our enum-based FSM is purpose-built for the realities of async 
 
 ## Theoretical Foundation: Mealy Machine with Modern Extensions
 
-You might be curious how obzenflow_fsm relates to traditional state machine theory. At its core, this implementation is closest to a **Mealy machine** with some practical adaptations for async Rust.
+You might be curious how ObzenFlow FSM relates to traditional state machine theory. At its core, this implementation is closest to a **Mealy machine** with some practical adaptations for async Rust.
 
 ### Core Mealy Machine Characteristics
 
@@ -161,7 +166,7 @@ You might be curious how obzenflow_fsm relates to traditional state machine theo
 
 ### Why Not a Moore Machine?
 
-In a Moore machine, outputs depend only on the current state, not the input. But in obzenflow_fsm, the transition handlers explicitly receive both state AND event to determine actions. This gives us more flexibility for real-world use cases.
+In a Moore machine, outputs depend only on the current state, not the input. But in ObzenFlow FSM, the transition handlers explicitly receive both state AND event to determine actions. This gives us more flexibility for real-world use cases.
 
 ### Modern Extensions Beyond Classical Theory
 

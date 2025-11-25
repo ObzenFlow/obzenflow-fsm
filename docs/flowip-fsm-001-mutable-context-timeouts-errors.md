@@ -1,4 +1,6 @@
-## Design: Single Mutable-Context API in `obzenflow_fsm`
+## FLOWIP-FSM-001: Mutable-Context FSM API, Timeouts, and Errors
+
+### Single Mutable-Context API in `obzenflow_fsm`
 
 ### Overview
 
@@ -8,7 +10,7 @@
 - Transition / entry / exit / timeout / unhandled handlers all receive `Arc<C>`
 - `FsmAction::execute(&self, &Context)`
 
-For FlowState RS and FLOWIP‑080p/080p‑part‑2, the ideal model is:
+For ObzenFlow and FLOWIP‑080p/080p‑part‑2, the ideal model is:
 
 - Each supervisor **owns** its FSM context.
 - The FSM and actions mutate that context directly via `&mut Context`.
@@ -93,7 +95,7 @@ Relevant APIs today:
   - `pub trait FsmContext { fn describe(&self) -> String { … } }`
   - `pub trait FsmAction { type Context: FsmContext; async fn execute(&self, ctx: &Self::Context) -> Result<(), String>; }`
 
-Runtimes (e.g., FlowState RS) wrap contexts in `Arc` before passing them into the FSM.
+Runtimes (e.g., ObzenFlow) wrap contexts in `Arc` before passing them into the FSM.
 
 ---
 
@@ -258,7 +260,75 @@ F: Fn(&S, &E, &mut C) -> Fut
 
 ---
 
-### Impact on FlowState RS
+### Timeouts, Self-Transitions, Errors, and Validation
+
+#### Overview
+
+- Clarify runtime semantics for initial-state timeouts and self-transitions in the dynamic-dispatch FSM.
+- Adopt structured errors (`FsmError`) across the public API.
+- Add builder-time validation to catch configuration mistakes early.
+- Improve observability with explicit handling of unhandled events and tracing.
+
+#### Context / Background
+
+- “Initial state” is simply the starting state provided to `FsmBuilder::new(...)`. Any state (including the initial one) can have a timeout if configured via `timeout(...)` in the builder.
+- Current behavior leaves `state_timeout = None` on construction, so an initial-state timeout never starts counting down until after some transition occurs.
+- Self-transitions are currently treated as no-ops for hooks and timeout refresh.
+- Unhandled events without a `when_unhandled` hook are often logged but otherwise treated as success, and errors are surfaced as plain `String`s.
+
+#### Current Pain Points
+
+- **Initial state timeout ignored**: `state_timeout` is never scheduled in `new`, so a configured initial-state timeout never fires until after a transition.
+- **Self-transitions are no-ops**: when `next_state == current_state`, entry/exit hooks and timeout refresh are skipped, leading to stale timers and surprising behavior.
+- **Silent overwrites**: the builder uses string keys and overwrites duplicate `(state, event)` handlers with no warning.
+- **Unstructured errors**: APIs return `Result<_, String>` even though `FsmError` exists, losing context about which handler and which state/event failed.
+- **Unhandled events are easy to miss**: an event with no handler and no `when_unhandled` hook does not reliably fail the call, which can hide configuration mistakes.
+
+#### Decisions
+
+1. **Initial-state timeout scheduling**
+   - Schedule timeouts in `StateMachine::new` when the initial state has a timeout handler by setting `state_timeout = Instant::now() + duration`.
+2. **Self-transition semantics**
+   - Treat self-transitions as full transitions (run exit→entry hooks and refresh timeout), not as silent no-ops.
+3. **Timeout refreshing**
+   - Refresh `state_timeout` on every transition (including self-transitions) based on the resulting state; clear when no timeout is configured.
+4. **Builder validation**
+   - Error on duplicate `(state, event)` registrations (e.g., `FsmError::DuplicateHandler { state, event }`).
+   - Optionally support a “strict mode” to also validate state/event names against allowlists when provided by the caller.
+5. **Error surfacing and unhandled events**
+   - Public APIs (`handle`, `check_timeout`, `execute_actions`, `build`) return `Result<_, FsmError>`.
+   - Map handler/timeout failures to `FsmError::HandlerError`; add variants for `UnhandledEvent`, `Timeout`, `DuplicateHandler`, etc.
+   - For unhandled events, prefer failing with `FsmError::UnhandledEvent { state, event }` unless the user installs an explicit `when_unhandled` handler that chooses to return `Ok(())`.
+   - Keep precedence: specific handler > wildcard > `when_unhandled` hook.
+6. **Telemetry and tracing**
+   - Emit structured tracing events for transitions, timeouts firing, handler failures, and unhandled events to aid production debugging.
+
+#### Technical Plan (Timeouts, Errors, Validation)
+
+- **Error plumbing**
+  - Update signatures and internal calls to return `FsmError` instead of `String`.
+  - Ensure `when_unhandled` failures propagate via a `HandlerError` variant.
+- **Initial timeout**
+  - In `StateMachine::new`, set `state_timeout` when the initial state has a timeout handler; use `Instant::now() + duration`.
+- **Self-transition handling**
+  - Implement full hooks + timeout refresh semantics in `apply_transition`, including for helper methods that encode “stay” or “goto” semantics.
+- **Builder validation**
+  - Track and reject duplicate `(state, event)` inserts at build time with structured errors.
+  - Add optional strict mode in the builder for validating known state/event names, while allowing dynamic names in lax mode.
+- **Docs & tests**
+  - Add tests for: initial-state timeout triggering, self-transition hooks + timeout refresh, duplicate handler rejection, unhandled events with `FsmError`.
+  - Update README/CHANGELOG to document semantics, migration notes, and error type changes.
+
+#### Compatibility & Migration Notes (Timeouts/Errors)
+
+- Changing timeout/self-transition semantics may require test updates for existing users; document clearly.
+- Switching to `FsmError` changes public signatures; callers need to handle the enum instead of `String`.
+- Validation errors at build time will fail fast for previously silent duplicates; highlight in release notes.
+- Unhandled events without a `when_unhandled` hook will now fail the call rather than returning `Ok(vec![])`, making configuration mistakes visible.
+
+---
+
+### Impact on ObzenFlow
 
 For each supervisor (stateful, join, sink, pipeline, sources, transforms):
 
@@ -278,7 +348,7 @@ For each supervisor (stateful, join, sink, pipeline, sources, transforms):
   machine.execute_actions(actions, &mut context).await?;
   ```
 
-- `HandlerSupervisedExt::run` in FlowState RS:
+- `HandlerSupervisedExt::run` in ObzenFlow:
   - Stop wrapping the context in `Arc`.
   - Hold `Context` by value in the run loop.
   - Pass `&mut Context` into `StateMachine::handle` and `execute_actions`.
@@ -298,8 +368,8 @@ Supervisors that need genuine cross-task sharing of specific resources will wrap
     - `StateMachine` unit tests.
   - Ensure timeouts, entry/exit hooks, wildcard/unhandled behaviors all work with `&mut Context`.
 
-- **In FlowState RS**
+- **In ObzenFlow**
   - Update supervisors and contexts to use the new API.
   - Remove now-unnecessary `Arc<RwLock<…>>` wrappers for purely local state where possible, relying on 080p‑part‑2 for lock-safety guidance.
 
-This yields a single, coherent FSM API aligned with FLOWIP‑080p’s “FSM owns and mutates its state” design, without a parallel Arc-based path.
+This yields a single, coherent ObzenFlow FSM API aligned with FLOWIP‑080p’s “FSM owns and mutates its state” design, without a parallel Arc-based path.
