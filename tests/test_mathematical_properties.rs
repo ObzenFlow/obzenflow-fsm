@@ -105,7 +105,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     impl FsmAction for BeastAction {
         type Context = BeastContext;
 
-        async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 BeastAction::RecordOperation(op) => {
                     ctx.operation_log.write().await.push((op.clone(), "executed".to_string()));
@@ -123,11 +123,11 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         }
     }
 
-    let ctx = Arc::new(BeastContext {
+    let mut ctx = BeastContext {
         seen_events: Arc::new(RwLock::new(std::collections::HashSet::new())),
         duplicate_count: Arc::new(AtomicUsize::new(0)),
         operation_log: Arc::new(RwLock::new(Vec::new())),
-    });
+    };
 
     // === BUILD THE BEAST'S FSM ===
     let fsm = FsmBuilder::new(BeastState::Counting {
@@ -136,10 +136,10 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         operation_ids: std::collections::HashSet::new(),
     })
         .when("Counting")
-            .on("Credit", |state, event: &BeastEvent, ctx: Arc<BeastContext>| {
+            .on("Credit", |state, event: &BeastEvent, ctx: &mut BeastContext| {
                 let state = state.clone();
                 let event = event.clone();
-                async move {
+                Box::pin(async move {
                     if let (BeastState::Counting { balance, mut operations, mut operation_ids },
                            BeastEvent::Credit { id, amount }) = (state, event) {
 
@@ -181,12 +181,12 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                     } else {
                         unreachable!()
                     }
-                }
+                })
             })
-            .on("Debit", |state, event: &BeastEvent, ctx: Arc<BeastContext>| {
+            .on("Debit", |state, event: &BeastEvent, ctx: &mut BeastContext| {
                 let state = state.clone();
                 let event = event.clone();
-                async move {
+                Box::pin(async move {
                     if let (BeastState::Counting { balance, mut operations, operation_ids },
                            BeastEvent::Debit { id, amount }) = (state, event) {
 
@@ -207,12 +207,12 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                     } else {
                         unreachable!()
                     }
-                }
+                })
             })
-            .on("Append", |state, event: &BeastEvent, ctx: Arc<BeastContext>| {
+            .on("Append", |state, event: &BeastEvent, ctx: &mut BeastContext| {
                 let state = state.clone();
                 let event = event.clone();
-                async move {
+                Box::pin(async move {
                     if let (BeastState::Counting { balance, mut operations, operation_ids },
                            BeastEvent::Append { id, value }) = (state, event) {
 
@@ -227,11 +227,11 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                     } else {
                         unreachable!()
                     }
-                }
+                })
             })
-            .on("MarkOfBeast", |state, _event: &BeastEvent, ctx: Arc<BeastContext>| {
+            .on("MarkOfBeast", |state, _event: &BeastEvent, ctx: &mut BeastContext| {
                 let state = state.clone();
-                async move {
+                Box::pin(async move {
                     if let BeastState::Counting { balance, operations, operation_ids } = state {
                         let duplicates = ctx.duplicate_count.load(Ordering::Relaxed);
                         if balance == 666 || duplicates == 666 || operations.len() == 666 {
@@ -252,7 +252,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                     } else {
                         unreachable!()
                     }
-                }
+                })
             })
             .done()
         .build();
@@ -271,7 +271,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
 
         // Send the same event 3 times (AT LEAST ONCE!)
         for _ in 0..3 {
-            machine.handle(event.clone(), ctx.clone()).await.unwrap();
+            machine.handle(event.clone(), &mut ctx).await.unwrap();
         }
     }
 
@@ -290,7 +290,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
 
     // Process in order
     for event in &append_events {
-        machine.handle(event.clone(), ctx.clone()).await.unwrap();
+        machine.handle(event.clone(), &mut ctx).await.unwrap();
     }
 
     let ordered_ops = if let BeastState::Counting { operations, .. } = machine.state() {
@@ -306,10 +306,10 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         operation_ids: std::collections::HashSet::new(),
     })
         .when("Counting")
-            .on("Append", |state, event: &BeastEvent, _ctx: Arc<BeastContext>| {
+            .on("Append", |state, event: &BeastEvent, _ctx: &mut BeastContext| {
                 let state = state.clone();
                 let event = event.clone();
-                async move {
+                Box::pin(async move {
                     if let (BeastState::Counting { balance, mut operations, operation_ids },
                            BeastEvent::Append { value, .. }) = (state, event) {
                         operations.push(value);
@@ -320,14 +320,14 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                     } else {
                         unreachable!()
                     }
-                }
+                })
             })
             .done()
         .build();
 
     // Process in reverse order
     for event in append_events.iter().rev() {
-        machine2.handle(event.clone(), ctx.clone()).await.unwrap();
+        machine2.handle(event.clone(), &mut ctx).await.unwrap();
     }
 
     let reversed_ops = if let BeastState::Counting { operations, .. } = machine2.state() {
@@ -351,13 +351,13 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         };
         // Only handle if still in Counting state (might transition to Corrupted)
         if matches!(machine.state(), BeastState::Counting { .. }) {
-            machine.handle(event, ctx.clone()).await.unwrap();
+            machine.handle(event, &mut ctx).await.unwrap();
         }
 
         if i == 333 {
             // Check for the mark mid-way
             if matches!(machine.state(), BeastState::Counting { .. }) {
-                machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
+                machine.handle(BeastEvent::MarkOfBeast, &mut ctx).await.unwrap();
             }
         }
     }
@@ -375,10 +375,10 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         machine.handle(BeastEvent::Credit {
             id: "beast".to_string(),
             amount: 232  // 434 + 232 = 666
-        }, ctx.clone()).await.unwrap();
+        }, &mut ctx).await.unwrap();
 
         // Check for the mark
-        let actions = machine.handle(BeastEvent::MarkOfBeast, ctx.clone()).await.unwrap();
+        let actions = machine.handle(BeastEvent::MarkOfBeast, &mut ctx).await.unwrap();
         println!("📋 Actions returned: {:?}", actions);
     }
 

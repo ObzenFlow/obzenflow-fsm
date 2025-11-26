@@ -67,38 +67,43 @@ enum ConnectionAction {
 impl FsmAction for ConnectionAction {
     type Context = ConnectionContext;
     
-    async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+    async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             ConnectionAction::OpenSocket(endpoint) => {
                 let mut socket = ctx.socket_manager.lock().await;
                 socket.is_open = true;
-                ctx.event_log.send(format!("Socket opened to {}", endpoint))
-                    .map_err(|e| e.to_string())?;
+                ctx.event_log
+                    .send(format!("Socket opened to {}", endpoint))
+                    .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
             ConnectionAction::CloseSocket => {
                 let mut socket = ctx.socket_manager.lock().await;
                 socket.is_open = false;
-                ctx.event_log.send("Socket closed".to_string())
-                    .map_err(|e| e.to_string())?;
+                ctx.event_log
+                    .send("Socket closed".to_string())
+                    .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
             ConnectionAction::ScheduleRetry(duration) => {
-                ctx.event_log.send(format!("Scheduled retry in {:?}", duration))
-                    .map_err(|e| e.to_string())?;
+                ctx.event_log
+                    .send(format!("Scheduled retry in {:?}", duration))
+                    .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
             ConnectionAction::IncrementHeartbeat => {
                 Ok(())
             }
             ConnectionAction::LogError(msg) => {
-                ctx.event_log.send(format!("ERROR: {}", msg))
-                    .map_err(|e| e.to_string())?;
+                ctx.event_log
+                    .send(format!("ERROR: {}", msg))
+                    .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
             ConnectionAction::NotifyDisconnected => {
-                ctx.event_log.send("Disconnected notification sent".to_string())
-                    .map_err(|e| e.to_string())?;
+                ctx.event_log
+                    .send("Disconnected notification sent".to_string())
+                    .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
         }
@@ -136,7 +141,7 @@ async fn test_complex_state_transitions() {
     
     let fsm = FsmBuilder::new(ConnectionState::Disconnected { retry_count: 0 })
         .when("Disconnected")
-            .on("Connect", |state: &ConnectionState, event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+            .on("Connect", |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let endpoint = match event {
                     ConnectionEvent::Connect { endpoint } => endpoint.clone(),
                     _ => unreachable!(),
@@ -147,7 +152,7 @@ async fn test_complex_state_transitions() {
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     ctx.event_log.send(format!("Connecting to {} (attempt #{})", endpoint, retry_count + 1)).unwrap();
                     
                     Ok(Transition {
@@ -157,18 +162,18 @@ async fn test_complex_state_transitions() {
                         },
                         actions: vec![ConnectionAction::OpenSocket(endpoint)],
                     })
-                }
+                })
             })
             .done()
         
         .when("Connecting")
-            .timeout(Duration::from_secs(5), |state: &ConnectionState, ctx: Arc<ConnectionContext>| {
+            .timeout(Duration::from_secs(5), |state: &ConnectionState, ctx: &mut ConnectionContext| {
                 let attempt = match state {
                     ConnectionState::Connecting { attempt, .. } => attempt.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     ctx.event_log.send("Connection timeout".to_string()).unwrap();
                     
                     if attempt >= 3 {
@@ -187,19 +192,21 @@ async fn test_complex_state_transitions() {
                             next_state: ConnectionState::Disconnected { retry_count: attempt },
                             actions: vec![
                                 ConnectionAction::CloseSocket,
-                                ConnectionAction::ScheduleRetry(Duration::from_secs(attempt as u64)),
+                                ConnectionAction::ScheduleRetry(Duration::from_secs(
+                                    attempt as u64,
+                                )),
                             ],
                         })
                     }
-                }
+                })
             })
-            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let session_id = match event {
                     ConnectionEvent::ConnectionEstablished { session_id } => session_id.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_connections += 1;
                     
@@ -210,19 +217,19 @@ async fn test_complex_state_transitions() {
                         },
                         actions: vec![],
                     })
-                }
+                })
             })
             .done()
         
         .when("Connected")
-            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let (session_id, heartbeat_count) = match state {
                     ConnectionState::Connected { session_id, heartbeat_count } => 
                         (session_id.clone(), *heartbeat_count),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_heartbeats += 1;
                     
@@ -233,9 +240,9 @@ async fn test_complex_state_transitions() {
                         },
                         actions: vec![ConnectionAction::IncrementHeartbeat],
                     })
-                }
+                })
             })
-            .on("ConnectionLost", |state: &ConnectionState, event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+            .on("ConnectionLost", |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let session_id = match state {
                     ConnectionState::Connected { session_id, .. } => session_id.clone(),
                     _ => unreachable!(),
@@ -246,7 +253,7 @@ async fn test_complex_state_transitions() {
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     ctx.event_log.send(format!("Connection lost: {}", reason)).unwrap();
                     
                     Ok(Transition {
@@ -259,18 +266,18 @@ async fn test_complex_state_transitions() {
                             ConnectionAction::NotifyDisconnected,
                         ],
                     })
-                }
+                })
             })
             .done()
         
         .when("Reconnecting")
-            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, _ctx: Arc<ConnectionContext>| {
+            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 let session_id = match event {
                     ConnectionEvent::ConnectionEstablished { session_id } => session_id.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
                             session_id,
@@ -278,15 +285,15 @@ async fn test_complex_state_transitions() {
                         },
                         actions: vec![],
                     })
-                }
+                })
             })
-            .on("GiveUp", |state: &ConnectionState, _event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+            .on("GiveUp", |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let old_session = match state {
                     ConnectionState::Reconnecting { old_session, .. } => old_session.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_failures += 1;
                     
@@ -299,26 +306,26 @@ async fn test_complex_state_transitions() {
                             ConnectionAction::LogError("Reconnection failed".to_string()),
                         ],
                     })
-                }
+                })
             })
             .done()
         
         // Global handler for any unhandled event
-        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
             let state = state.clone();
             let event = event.clone();
-            async move {
+            Box::pin(async move {
                 ctx.event_log.send(
                     format!("Unhandled event {:?} in state {:?}", event, state)
                 ).unwrap();
                 Ok(())
-            }
+            })
         })
         
         .build();
 
     let mut connection = fsm;
-    let ctx = Arc::new(ConnectionContext {
+    let mut ctx = ConnectionContext {
         socket_manager: Arc::new(Mutex::new(MockSocketManager {
             is_open: false,
             fail_next: false,
@@ -329,23 +336,33 @@ async fn test_complex_state_transitions() {
             total_failures: 0,
         })),
         event_log: tx,
-    });
+    };
 
     // Test: Initial connection
-    let actions = connection.handle(
-        ConnectionEvent::Connect { endpoint: "ws://example.com".to_string() },
-        ctx.clone()
-    ).await.unwrap();
+    let actions = connection
+        .handle(
+            ConnectionEvent::Connect {
+                endpoint: "ws://example.com".to_string(),
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
     
     assert_eq!(actions.len(), 1);
     assert!(matches!(actions[0], ConnectionAction::OpenSocket(_)));
     assert!(matches!(connection.state(), ConnectionState::Connecting { attempt: 1, .. }));
 
     // Test: Connection established
-    let actions = connection.handle(
-        ConnectionEvent::ConnectionEstablished { session_id: "sess-123".to_string() },
-        ctx.clone()
-    ).await.unwrap();
+    let actions = connection
+        .handle(
+            ConnectionEvent::ConnectionEstablished {
+                session_id: "sess-123".to_string(),
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
     
     assert_eq!(actions.len(), 0);
     assert!(matches!(
@@ -355,7 +372,10 @@ async fn test_complex_state_transitions() {
 
     // Test: Multiple heartbeats
     for i in 1..=3 {
-        let actions = connection.handle(ConnectionEvent::Heartbeat, ctx.clone()).await.unwrap();
+        let actions = connection
+            .handle(ConnectionEvent::Heartbeat, &mut ctx)
+            .await
+            .unwrap();
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             connection.state(),
@@ -364,10 +384,15 @@ async fn test_complex_state_transitions() {
     }
 
     // Test: Connection lost and reconnecting
-    let actions = connection.handle(
-        ConnectionEvent::ConnectionLost { reason: "Network error".to_string() },
-        ctx.clone()
-    ).await.unwrap();
+    let actions = connection
+        .handle(
+            ConnectionEvent::ConnectionLost {
+                reason: "Network error".to_string(),
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
     
     assert_eq!(actions.len(), 2);
     assert!(matches!(
@@ -395,24 +420,30 @@ async fn test_timeout_handling() {
     
     let fsm = FsmBuilder::new(ConnectionState::Disconnected { retry_count: 0 })
         .when("Connecting")
-            .timeout(Duration::from_millis(100), |_state: &ConnectionState, _ctx: Arc<ConnectionContext>| async {
-                Ok(Transition {
-                    next_state: ConnectionState::Failed {
-                        reason: "Timeout".to_string(),
-                        permanent: false,
-                    },
-                    actions: vec![ConnectionAction::LogError("Connection timed out".to_string())],
+            .timeout(Duration::from_millis(100), |_state: &ConnectionState, _ctx: &mut ConnectionContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: ConnectionState::Failed {
+                            reason: "Timeout".to_string(),
+                            permanent: false,
+                        },
+                        actions: vec![ConnectionAction::LogError(
+                            "Connection timed out".to_string(),
+                        )],
+                    })
                 })
             })
             .done()
         .when("Disconnected")
-            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: Arc<ConnectionContext>| async {
-                Ok(Transition {
-                    next_state: ConnectionState::Connecting {
-                        attempt: 1,
-                        started_at: std::time::Instant::now(),
-                    },
-                    actions: vec![],
+            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: ConnectionState::Connecting {
+                            attempt: 1,
+                            started_at: std::time::Instant::now(),
+                        },
+                        actions: vec![],
+                    })
                 })
             })
             .done()
@@ -420,7 +451,7 @@ async fn test_timeout_handling() {
 
     let mut connection = fsm;
     let (tx, _rx) = mpsc::unbounded_channel();
-    let ctx = Arc::new(ConnectionContext {
+    let mut ctx = ConnectionContext {
         socket_manager: Arc::new(Mutex::new(MockSocketManager {
             is_open: false,
             fail_next: false,
@@ -431,13 +462,18 @@ async fn test_timeout_handling() {
             total_failures: 0,
         })),
         event_log: tx,
-    });
+    };
 
     // Start connection
-    connection.handle(
-        ConnectionEvent::Connect { endpoint: "test".to_string() },
-        ctx.clone()
-    ).await.unwrap();
+    connection
+        .handle(
+            ConnectionEvent::Connect {
+                endpoint: "test".to_string(),
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
     
     assert!(matches!(connection.state(), ConnectionState::Connecting { .. }));
 
@@ -445,7 +481,7 @@ async fn test_timeout_handling() {
     sleep(Duration::from_millis(150)).await;
     
     // Check timeout should trigger state change
-    let actions = connection.check_timeout(ctx.clone()).await.unwrap();
+    let actions = connection.check_timeout(&mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(actions[0], ConnectionAction::LogError(_)));
     assert!(matches!(
@@ -460,30 +496,32 @@ async fn test_invalid_transitions_handled_gracefully() {
     
     let fsm = FsmBuilder::<ConnectionState, ConnectionEvent, ConnectionContext, ConnectionAction>::new(ConnectionState::Disconnected { retry_count: 0 })
         .when("Disconnected")
-            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: Arc<ConnectionContext>| async {
-                Ok(Transition {
-                    next_state: ConnectionState::Connecting {
-                        attempt: 1,
-                        started_at: std::time::Instant::now(),
-                    },
-                    actions: vec![],
+            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: ConnectionState::Connecting {
+                            attempt: 1,
+                            started_at: std::time::Instant::now(),
+                        },
+                        actions: vec![],
+                    })
                 })
             })
             .done()
-        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: Arc<ConnectionContext>| {
+        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
             let state_name = state.variant_name().to_string();
             let event_name = event.variant_name().to_string();
-            async move {
+            Box::pin(async move {
                 ctx.event_log.send(
                     format!("Invalid transition: {} in state {}", event_name, state_name)
                 ).unwrap();
                 Ok(())
-            }
+            })
         })
         .build();
 
     let mut connection = fsm;
-    let ctx = Arc::new(ConnectionContext {
+    let mut ctx = ConnectionContext {
         socket_manager: Arc::new(Mutex::new(MockSocketManager {
             is_open: false,
             fail_next: false,
@@ -494,10 +532,13 @@ async fn test_invalid_transitions_handled_gracefully() {
             total_failures: 0,
         })),
         event_log: tx,
-    });
+    };
 
     // Try invalid transition: Heartbeat while Disconnected
-    let actions = connection.handle(ConnectionEvent::Heartbeat, ctx.clone()).await.unwrap();
+    let actions = connection
+        .handle(ConnectionEvent::Heartbeat, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 0); // No actions, just logged
     assert!(matches!(connection.state(), ConnectionState::Disconnected { .. })); // State unchanged
 
@@ -601,7 +642,7 @@ async fn test_concurrent_operations() {
     impl FsmAction for CounterAction {
         type Context = CounterContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 CounterAction::Initialize => Ok(()),
                 CounterAction::UpdateValue(_) => Ok(()),
@@ -612,22 +653,24 @@ async fn test_concurrent_operations() {
 
     let fsm = FsmBuilder::new(CounterState::Idle)
         .when("Idle")
-            .on("Start", |_state: &CounterState, _event: &CounterEvent, ctx: Arc<CounterContext>| async move {
-                ctx.external_counter.store(0, Ordering::SeqCst);
-                Ok(Transition {
-                    next_state: CounterState::Counting { value: 0 },
-                    actions: vec![CounterAction::Initialize],
+            .on("Start", |_state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
+                Box::pin(async move {
+                    ctx.external_counter.store(0, Ordering::SeqCst);
+                    Ok(Transition {
+                        next_state: CounterState::Counting { value: 0 },
+                        actions: vec![CounterAction::Initialize],
+                    })
                 })
             })
             .done()
         .when("Counting")
-            .on("Increment", |state: &CounterState, _event: &CounterEvent, ctx: Arc<CounterContext>| {
+            .on("Increment", |state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
                 let current = match state {
                     CounterState::Counting { value } => value.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     // Simulate some async work
                     tokio::time::sleep(Duration::from_micros(100)).await;
                     
@@ -638,20 +681,20 @@ async fn test_concurrent_operations() {
                         next_state: CounterState::Counting { value: new_value },
                         actions: vec![CounterAction::UpdateValue(new_value)],
                     })
-                }
+                })
             })
-            .on("Finish", |state: &CounterState, _event: &CounterEvent, _ctx: Arc<CounterContext>| {
+            .on("Finish", |state: &CounterState, _event: &CounterEvent, _ctx: &mut CounterContext| {
                 let final_value = match state {
                     CounterState::Counting { value } => value.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     Ok(Transition {
                         next_state: CounterState::Done { final_value },
                         actions: vec![CounterAction::Finalize],
                     })
-                }
+                })
             })
             .done()
         .build();
@@ -662,10 +705,10 @@ async fn test_concurrent_operations() {
     // Start counting
     {
         let mut fsm = shared_fsm.lock().await;
-        let ctx = Arc::new(CounterContext {
+        let mut ctx = CounterContext {
             external_counter: external_counter.clone(),
-        });
-        fsm.handle(CounterEvent::Start, ctx).await.unwrap();
+        };
+        fsm.handle(CounterEvent::Start, &mut ctx).await.unwrap();
     }
 
     // Spawn multiple tasks to increment concurrently
@@ -676,10 +719,10 @@ async fn test_concurrent_operations() {
         
         let handle = tokio::spawn(async move {
             let mut fsm = fsm_clone.lock().await;
-            let ctx = Arc::new(CounterContext {
+            let mut ctx = CounterContext {
                 external_counter: counter_clone,
-            });
-            fsm.handle(CounterEvent::Increment, ctx).await.unwrap();
+            };
+            fsm.handle(CounterEvent::Increment, &mut ctx).await.unwrap();
         });
         
         handles.push(handle);
@@ -693,11 +736,11 @@ async fn test_concurrent_operations() {
     // Finish and check final state
     {
         let mut fsm = shared_fsm.lock().await;
-        let ctx = Arc::new(CounterContext {
+        let mut ctx = CounterContext {
             external_counter: external_counter.clone(),
-        });
+        };
         
-        let actions = fsm.handle(CounterEvent::Finish, ctx).await.unwrap();
+        let actions = fsm.handle(CounterEvent::Finish, &mut ctx).await.unwrap();
         assert!(matches!(actions[0], CounterAction::Finalize));
         
         // Verify final state
@@ -775,7 +818,7 @@ async fn test_entry_exit_handlers() {
     impl FsmAction for LifecycleAction {
         type Context = LifecycleContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 LifecycleAction::Log(msg) => {
                     println!("Log: {}", msg);
@@ -789,86 +832,102 @@ async fn test_entry_exit_handlers() {
 
     let fsm = FsmBuilder::new(LifecycleState::Created)
         .when("Created")
-            .on("Initialize", |_state: &LifecycleState, event: &LifecycleEvent, _ctx: Arc<LifecycleContext>| {
+            .on("Initialize", |_state: &LifecycleState, event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
                 let id = match event {
                     LifecycleEvent::Initialize { id } => id.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     Ok(Transition {
                         next_state: LifecycleState::Initialized { id },
                         actions: vec![LifecycleAction::AllocateResources],
                     })
-                }
+                })
             })
             .done()
         
         .when("Initialized")
-            .on("Activate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: Arc<LifecycleContext>| async {
-                Ok(Transition {
-                    next_state: LifecycleState::Active,
-                    actions: vec![],
+            .on("Activate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: LifecycleState::Active,
+                        actions: vec![],
+                    })
                 })
             })
             .done()
         
         .when("Active")
-            .on("Terminate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: Arc<LifecycleContext>| async {
-                Ok(Transition {
-                    next_state: LifecycleState::Terminated,
-                    actions: vec![LifecycleAction::ReleaseResources],
+            .on("Terminate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: LifecycleState::Terminated,
+                        actions: vec![LifecycleAction::ReleaseResources],
+                    })
                 })
             })
             .done()
         
         // Entry handlers
-        .on_entry("Initialized", |state: &LifecycleState, ctx: Arc<LifecycleContext>| {
+        .on_entry("Initialized", |state: &LifecycleState, ctx: &mut LifecycleContext| {
             let id = match state {
                 LifecycleState::Initialized { id } => id.clone(),
                 _ => unreachable!(),
             };
-            async move {
+            Box::pin(async move {
                 ctx.entry_count.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![LifecycleAction::Log(format!("Entered Initialized with id={}", id))])
-            }
+                Ok(vec![LifecycleAction::Log(format!(
+                    "Entered Initialized with id={}",
+                    id
+                ))])
+            })
         })
         
-        .on_entry("Active", |_state: &LifecycleState, ctx: Arc<LifecycleContext>| {
-            async move {
-            ctx.entry_count.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![LifecycleAction::Log("Entered Active state".to_string())])
-            }
+        .on_entry("Active", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+            Box::pin(async move {
+                ctx.entry_count.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![LifecycleAction::Log(
+                    "Entered Active state".to_string(),
+                )])
+            })
         })
         
         // Exit handlers
-        .on_exit("Initialized", |_state: &LifecycleState, ctx: Arc<LifecycleContext>| {
-            async move {
-            ctx.exit_count.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![LifecycleAction::Log("Exiting Initialized state".to_string())])
-            }
+        .on_exit("Initialized", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+            Box::pin(async move {
+                ctx.exit_count.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![LifecycleAction::Log(
+                    "Exiting Initialized state".to_string(),
+                )])
+            })
         })
         
-        .on_exit("Active", |_state: &LifecycleState, ctx: Arc<LifecycleContext>| {
-            async move {
-            ctx.exit_count.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![LifecycleAction::Log("Exiting Active state".to_string())])
-            }
+        .on_exit("Active", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+            Box::pin(async move {
+                ctx.exit_count.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![LifecycleAction::Log(
+                    "Exiting Active state".to_string(),
+                )])
+            })
         })
         
         .build();
 
     let mut lifecycle = fsm;
-    let ctx = Arc::new(LifecycleContext {
+    let mut ctx = LifecycleContext {
         entry_count: Arc::new(AtomicU32::new(0)),
         exit_count: Arc::new(AtomicU32::new(0)),
-    });
+    };
 
     // Initialize
-    let actions = lifecycle.handle(
-        LifecycleEvent::Initialize { id: 42 },
-        ctx.clone()
-    ).await.unwrap();
+    let actions = lifecycle
+        .handle(
+            LifecycleEvent::Initialize { id: 42 },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
     
     // Should have: entry action + transition action
     assert_eq!(actions.len(), 2);
@@ -877,7 +936,10 @@ async fn test_entry_exit_handlers() {
     assert_eq!(ctx.entry_count.load(Ordering::SeqCst), 1);
 
     // Activate
-    let actions = lifecycle.handle(LifecycleEvent::Activate, ctx.clone()).await.unwrap();
+    let actions = lifecycle
+        .handle(LifecycleEvent::Activate, &mut ctx)
+        .await
+        .unwrap();
     
     // Should have: exit handler + entry handler
     assert_eq!(actions.len(), 2);
@@ -887,7 +949,10 @@ async fn test_entry_exit_handlers() {
     assert_eq!(ctx.exit_count.load(Ordering::SeqCst), 1);
 
     // Terminate
-    let actions = lifecycle.handle(LifecycleEvent::Terminate, ctx.clone()).await.unwrap();
+    let actions = lifecycle
+        .handle(LifecycleEvent::Terminate, &mut ctx)
+        .await
+        .unwrap();
     
     // Should have: exit handler + transition action
     assert_eq!(actions.len(), 2);
@@ -951,37 +1016,41 @@ async fn test_error_handling() {
     impl FsmAction for FallibleAction {
         type Context = FallibleContext;
         
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
     let fsm = FsmBuilder::new(FallibleState::Ready)
         .when("Ready")
-            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: Arc<FallibleContext>| {
+            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 let should_fail = match event {
                     FallibleEvent::Process { should_fail } => should_fail.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     if should_fail {
-                        Err("Simulated processing error".to_string())
+                        Err(obzenflow_fsm::FsmError::HandlerError(
+                            "Simulated processing error".to_string(),
+                        ))
                     } else {
                         Ok(Transition {
                             next_state: FallibleState::Processing,
                             actions: vec![FallibleAction::StartProcessing],
                         })
                     }
-                }
+                })
             })
             .done()
         
         .when("Error")
-            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: Arc<FallibleContext>| async {
-                Ok(Transition {
-                    next_state: FallibleState::Ready,
-                    actions: vec![FallibleAction::Cleanup],
+            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: FallibleState::Ready,
+                        actions: vec![FallibleAction::Cleanup],
+                    })
                 })
             })
             .done()
@@ -989,13 +1058,15 @@ async fn test_error_handling() {
         .build();
 
     let mut machine = fsm;
-    let ctx = Arc::new(FallibleContext);
+    let mut ctx = FallibleContext;
 
     // Test successful processing
-    let result = machine.handle(
-        FallibleEvent::Process { should_fail: false },
-        ctx.clone()
-    ).await;
+    let result = machine
+        .handle(
+            FallibleEvent::Process { should_fail: false },
+            &mut ctx,
+        )
+        .await;
     
     assert!(result.is_ok());
     assert!(matches!(machine.state(), FallibleState::Processing));
@@ -1003,30 +1074,34 @@ async fn test_error_handling() {
     // Reset FSM by creating a new one for the next test
     let mut machine = FsmBuilder::new(FallibleState::Ready)
         .when("Ready")
-            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: Arc<FallibleContext>| {
+            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 let should_fail = match event {
                     FallibleEvent::Process { should_fail } => should_fail.clone(),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     if should_fail {
-                        Err("Simulated processing error".to_string())
+                        Err(obzenflow_fsm::FsmError::HandlerError(
+                            "Simulated processing error".to_string(),
+                        ))
                     } else {
                         Ok(Transition {
                             next_state: FallibleState::Processing,
                             actions: vec![FallibleAction::StartProcessing],
                         })
                     }
-                }
+                })
             })
             .done()
         
         .when("Error")
-            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: Arc<FallibleContext>| async {
-                Ok(Transition {
-                    next_state: FallibleState::Ready,
-                    actions: vec![FallibleAction::Cleanup],
+            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: FallibleState::Ready,
+                        actions: vec![FallibleAction::Cleanup],
+                    })
                 })
             })
             .done()
@@ -1034,13 +1109,21 @@ async fn test_error_handling() {
         .build();
 
     // Test failed processing
-    let result = machine.handle(
-        FallibleEvent::Process { should_fail: true },
-        ctx.clone()
-    ).await;
+    let result = machine
+        .handle(
+            FallibleEvent::Process { should_fail: true },
+            &mut ctx,
+        )
+        .await;
     
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "Simulated processing error");
+    assert_eq!(
+        result
+            .as_ref()
+            .unwrap_err()
+            .to_string(),
+        "Handler error: Simulated processing error"
+    );
     assert!(matches!(machine.state(), FallibleState::Ready)); // State unchanged on error
 }
 
@@ -1055,14 +1138,14 @@ async fn test_state_persistence() {
     
     let fsm = FsmBuilder::new(initial_state.clone())
         .when("Connected")
-            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, _ctx: Arc<ConnectionContext>| {
+            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 let (session_id, heartbeat_count) = match state {
                     ConnectionState::Connected { session_id, heartbeat_count } => 
                         (session_id.clone(), *heartbeat_count),
                     _ => unreachable!(),
                 };
                 
-                async move {
+                Box::pin(async move {
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
                             session_id,
@@ -1070,14 +1153,14 @@ async fn test_state_persistence() {
                         },
                         actions: vec![ConnectionAction::IncrementHeartbeat],
                     })
-                }
+                })
             })
             .done()
         .build();
 
     let mut restored_fsm = fsm;
     let (tx, _rx) = mpsc::unbounded_channel();
-    let ctx = Arc::new(ConnectionContext {
+    let mut ctx = ConnectionContext {
         socket_manager: Arc::new(Mutex::new(MockSocketManager {
             is_open: true,
             fail_next: false,
@@ -1088,7 +1171,7 @@ async fn test_state_persistence() {
             total_failures: 0,
         })),
         event_log: tx,
-    });
+    };
 
     // Verify restored state
     assert!(matches!(
@@ -1097,7 +1180,10 @@ async fn test_state_persistence() {
     ));
 
     // Continue from restored state
-    let actions = restored_fsm.handle(ConnectionEvent::Heartbeat, ctx.clone()).await.unwrap();
+    let actions = restored_fsm
+        .handle(ConnectionEvent::Heartbeat, &mut ctx)
+        .await
+        .unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         restored_fsm.state(),

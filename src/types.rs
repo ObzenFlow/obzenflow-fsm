@@ -2,6 +2,8 @@
 
 use std::fmt::Debug;
 
+use crate::error::FsmError;
+
 /// Represents a state transition result
 #[derive(Clone, Debug)]
 pub struct Transition<S, A> {
@@ -113,7 +115,7 @@ pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
     type Context: FsmContext;
     
     /// Execute this action with the given context
-    async fn execute(&self, ctx: &Self::Context) -> Result<(), String>;
+    async fn execute(&self, ctx: &mut Self::Context) -> FsmResult<()>;
     
     /// Get a description of what this action does
     fn describe(&self) -> String {
@@ -125,4 +127,4 @@ pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
 pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 /// Result type for FSM operations
-pub type FsmResult<T, E = String> = Result<T, E>;
+pub type FsmResult<T> = Result<T, FsmError>;
