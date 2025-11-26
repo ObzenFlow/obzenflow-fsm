@@ -45,7 +45,15 @@ where
             exit_handlers: HashMap::new(),
             timeout_handlers: HashMap::new(),
             duplicate_handlers: Vec::new(),
-            strict_validation: false,
+            // FLOWIP-FSM: Strict validation is enabled by default.
+            // This means all FSMs created through FsmBuilder will:
+            // - Reject duplicate (state, event) handlers (always-on),
+            // - Require the initial state to have at least one transition
+            //   or timeout configured.
+            //
+            // The `strict()` method remains for readability and tests, but
+            // calling `new()` alone is now equivalent to `new().strict()`.
+            strict_validation: true,
             unhandled_handler: None,
             _phantom: PhantomData,
         }

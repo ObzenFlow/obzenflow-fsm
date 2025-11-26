@@ -218,3 +218,65 @@ fn test_strict_mode_allows_valid_initial_state() {
     let result = builder.try_build();
     assert!(result.is_ok());
 }
+
+#[test]
+fn test_default_builder_requires_initial_transitions() {
+    // With strict_validation enabled by default, a builder with no transitions or timeouts
+    // for the initial state should fail just like explicit .strict().
+    let builder =
+        FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start);
+
+    let result = builder.try_build();
+    assert!(matches!(
+        result,
+        Err(FsmError::BuilderError(msg)) if msg.contains("initial state 'Start'")
+    ));
+}
+
+#[test]
+fn test_default_builder_allows_valid_initial_state() {
+    // Default builder (no .strict()) should accept a valid initial state configuration.
+    let builder = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done();
+
+    let result = builder.try_build();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[should_panic(expected = "FsmBuilder::build failed")]
+fn test_build_panics_on_duplicate_handler() {
+    // Sanity-check that build() panics on duplicate handlers and surfaces the builder error.
+    let _fsm = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done()
+        // Duplicate handler for the same (state, event) pair
+        .when("Start")
+        .on("Finish", |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: DemoState::End,
+                    actions: vec![],
+                })
+            })
+        })
+        .done()
+        .build();
+}
