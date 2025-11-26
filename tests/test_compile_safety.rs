@@ -44,8 +44,8 @@ impl FsmContext for ValidContext {}
 #[async_trait::async_trait]
 impl FsmAction for ValidAction {
     type Context = ValidContext;
-    
-    async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+    async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         Ok(())
     }
 }
@@ -55,10 +55,12 @@ impl FsmAction for ValidAction {
 fn test_valid_fsm_compiles() {
     let _ = FsmBuilder::new(ValidState::A)
         .when("A")
-        .on("Go", |_state: &ValidState, _event: &ValidEvent, _ctx: Arc<ValidContext>| async {
-            Ok(Transition {
-                next_state: ValidState::B,
-                actions: vec![ValidAction],
+        .on("Go", |_state: &ValidState, _event: &ValidEvent, _ctx: &mut ValidContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: ValidState::B,
+                    actions: vec![ValidAction],
+                })
             })
         })
         .done()
@@ -285,24 +287,25 @@ fn test_lifetime_safety() {
 /// Test that we can use the FSM trait object safely
 #[tokio::test]
 async fn test_trait_object_safety() {
-    
     let fsm = FsmBuilder::new(ValidState::A)
         .when("A")
-        .on("Go", |_state: &ValidState, _event: &ValidEvent, _ctx: Arc<ValidContext>| async {
-            Ok(Transition {
-                next_state: ValidState::B,
-                actions: vec![ValidAction],
+        .on("Go", |_state: &ValidState, _event: &ValidEvent, _ctx: &mut ValidContext| {
+            Box::pin(async {
+                Ok(Transition {
+                    next_state: ValidState::B,
+                    actions: vec![ValidAction],
+                })
             })
         })
         .done()
         .build();
-    
+
     // We can use the FSM through the trait
     let mut machine = fsm;
-    let ctx = Arc::new(ValidContext);
-    
+    let mut ctx = ValidContext;
+
     // This works because Fsm trait is properly defined
-    let actions = machine.handle(ValidEvent::Go, ctx).await.unwrap();
+    let actions = machine.handle(ValidEvent::Go, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
     assert_eq!(machine.state(), &ValidState::B);
 }
@@ -363,8 +366,8 @@ fn test_phantom_type_safety() {
     #[async_trait::async_trait]
     impl FsmAction for AuthAction {
         type Context = AuthContext;
-        
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
@@ -378,28 +381,28 @@ fn test_phantom_type_safety() {
         _phantom: PhantomData,
     })
     .when("State")
-    .on("Login", |state, event: &AuthEvent, _ctx: Arc<AuthContext>| {
+    .on("Login", |state, event: &AuthEvent, _ctx: &mut AuthContext| {
         let state = state.clone();
         let event = event.clone();
-        async move {
-        if let AuthEvent::Login { password } = event {
-            if password == "correct" {
-                // In a real system, this would upgrade auth level
-                // For demonstration, we stay in same type
-                Ok(Transition {
-                    next_state: state.clone(),
-                    actions: vec![AuthAction::GrantAccess],
-                })
+        Box::pin(async move {
+            if let AuthEvent::Login { password } = event {
+                if password == "correct" {
+                    // In a real system, this would upgrade auth level
+                    // For demonstration, we stay in same type
+                    Ok(Transition {
+                        next_state: state.clone(),
+                        actions: vec![AuthAction::GrantAccess],
+                    })
+                } else {
+                    Ok(Transition {
+                        next_state: state.clone(),
+                        actions: vec![AuthAction::DenyAccess],
+                    })
+                }
             } else {
-                Ok(Transition {
-                    next_state: state.clone(),
-                    actions: vec![AuthAction::DenyAccess],
-                })
+                unreachable!()
             }
-        } else {
-            unreachable!()
-        }
-        }
+        })
     })
     .done()
     .build();
@@ -439,8 +442,8 @@ async fn test_send_sync_requirements() {
     #[async_trait::async_trait]
     impl FsmAction for SendAction {
         type Context = ContextWithArc;
-        
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
@@ -449,11 +452,11 @@ async fn test_send_sync_requirements() {
         shared_data: Arc::new("initial".to_string()),
     })
     .when("SendState")
-    .on("Go", |state: &SendState, _event: &ValidEvent, ctx: Arc<ContextWithArc>| {
+    .on("Go", |state: &SendState, _event: &ValidEvent, ctx: &mut ContextWithArc| {
         let shared = state.shared_data.clone();
         let ctx_shared = ctx.shared_data.clone();
-        
-        async move {
+
+        Box::pin(async move {
             // We can use Arc in async block
             let _ = shared.len();
             let _ = ctx_shared.len();
@@ -464,18 +467,21 @@ async fn test_send_sync_requirements() {
                 },
                 actions: vec![],
             })
-        }
+        })
     })
     .done()
     .build();
     
     let mut machine = fsm;
-    let ctx = Arc::new(ContextWithArc {
+    let mut ctx = ContextWithArc {
         shared_data: Arc::new("shared".to_string()),
         other_data: Arc::new("other".to_string()),
-    });
-    
-    machine.handle(ValidEvent::Go, ctx).await.unwrap();
+    };
+
+    machine
+        .handle(ValidEvent::Go, &mut ctx)
+        .await
+        .unwrap();
 }
 
 /// Test const generics with FSM
@@ -520,8 +526,8 @@ fn test_const_generic_states() {
     #[async_trait::async_trait]
     impl FsmAction for NoAction {
         type Context = NoContext;
-        
-        async fn execute(&self, _ctx: &Self::Context) -> Result<(), String> {
+
+        async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
@@ -531,18 +537,22 @@ fn test_const_generic_states() {
         SizedState::Empty
     )
     .when("Empty")
-    .on("Fill", |_state, _event, _ctx: Arc<NoContext>| async {
-        Ok(Transition {
-            next_state: SizedState::Array { data: [42u8; 32] },
-            actions: vec![],
+    .on("Fill", |_state, _event, _ctx: &mut NoContext| {
+        Box::pin(async {
+            Ok(Transition {
+                next_state: SizedState::Array { data: [42u8; 32] },
+                actions: vec![],
+            })
         })
     })
     .done()
     .when("Array")
-    .on("Clear", |_state, _event, _ctx: Arc<NoContext>| async {
-        Ok(Transition {
-            next_state: SizedState::Empty,
-            actions: vec![],
+    .on("Clear", |_state, _event, _ctx: &mut NoContext| {
+        Box::pin(async {
+            Ok(Transition {
+                next_state: SizedState::Empty,
+                actions: vec![],
+            })
         })
     })
     .done()

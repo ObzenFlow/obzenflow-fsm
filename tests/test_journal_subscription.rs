@@ -110,7 +110,7 @@ async fn test_3_journal_subscription_chaos() {
     impl FsmAction for BabelAction {
         type Context = BabelContext;
 
-        async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
+        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 BabelAction::WriteToJournal(msg) => {
                     // Write to journal
@@ -128,14 +128,21 @@ async fn test_3_journal_subscription_chaos() {
         }
     }
 
-    let ctx = Arc::new(BabelContext {
-        journal: Arc::new(RwLock::new(Vec::new())),
-        subscribers: Arc::new(RwLock::new(HashMap::new())),
-        vector_clocks: Arc::new(RwLock::new(HashMap::new())),
-        message_counter: Arc::new(AtomicUsize::new(0)),
-        chaos_mode: Arc::new(AtomicBool::new(false)),
-        dropped_messages: Arc::new(AtomicUsize::new(0)),
-    });
+    let journal = Arc::new(RwLock::new(Vec::new()));
+    let subscribers = Arc::new(RwLock::new(HashMap::new()));
+    let vector_clocks = Arc::new(RwLock::new(HashMap::new()));
+    let message_counter = Arc::new(AtomicUsize::new(0));
+    let chaos_mode = Arc::new(AtomicBool::new(false));
+    let dropped_messages = Arc::new(AtomicUsize::new(0));
+
+    let ctx = BabelContext {
+        journal: journal.clone(),
+        subscribers: subscribers.clone(),
+        vector_clocks: vector_clocks.clone(),
+        message_counter: message_counter.clone(),
+        chaos_mode: chaos_mode.clone(),
+        dropped_messages: dropped_messages.clone(),
+    };
 
     // === THE BABEL BUILDERS (10 FSMs speaking different languages) ===
     let languages = vec![
@@ -146,15 +153,30 @@ async fn test_3_journal_subscription_chaos() {
     let mut speaker_handles = vec![];
 
     for (i, language) in languages.iter().enumerate() {
-        let ctx_clone = ctx.clone();
         let lang = language.to_string();
 
+        let journal = journal.clone();
+        let subscribers = subscribers.clone();
+        let vector_clocks = vector_clocks.clone();
+        let message_counter = message_counter.clone();
+        let chaos_mode = chaos_mode.clone();
+        let dropped_messages = dropped_messages.clone();
+
         let handle = tokio::spawn(async move {
+            let mut ctx = BabelContext {
+                journal,
+                subscribers,
+                vector_clocks,
+                message_counter,
+                chaos_mode,
+                dropped_messages,
+            };
+
             let mut fsm = FsmBuilder::<BabelState, BabelEvent, BabelContext, BabelAction>::new(
                 BabelState::Speaking { language: lang.clone() }
             )
-                .when("Speaking")
-                    .on("Speak", move |state, event, ctx: Arc<BabelContext>| {
+                    .when("Speaking")
+                    .on("Speak", move |state, event, ctx: &mut BabelContext| {
                         let event = event.clone();
                         let state_clone = state.clone();
                         let lang = if let BabelState::Speaking { language } = state {
@@ -163,7 +185,7 @@ async fn test_3_journal_subscription_chaos() {
                             "Unknown".to_string()
                         };
 
-                        async move {
+                        Box::pin(async move {
                             if let BabelEvent::Speak { message, .. } = event {
                                 // === WRITING TO THE JOURNAL ===
                                 let msg_id = ctx.message_counter.fetch_add(1, Ordering::SeqCst);
@@ -214,22 +236,24 @@ async fn test_3_journal_subscription_chaos() {
                                     actions: vec![],
                                 })
                             }
-                        }
+                        })
                     })
-                    .on("Overflow", move |_state, _event, ctx: Arc<BabelContext>| async move {
+                    .on("Overflow", move |_state, _event, ctx: &mut BabelContext| {
                         // === THE FLOOD OF MESSAGES ===
                         ctx.chaos_mode.store(true, Ordering::Relaxed);
-                        Ok(Transition {
-                            next_state: BabelState::Confused,
-                            actions: vec![BabelAction::DropMessages],
+                        Box::pin(async move {
+                            Ok(Transition {
+                                next_state: BabelState::Confused,
+                                actions: vec![BabelAction::DropMessages],
+                            })
                         })
                     })
                     .done()
                 .when("Confused")
-                    .on("Speak", move |state, event, ctx: Arc<BabelContext>| {
+                    .on("Speak", move |state, event, ctx: &mut BabelContext| {
                         let event = event.clone();
                         let state_clone = state.clone();
-                        async move {
+                        Box::pin(async move {
                             if let BabelEvent::Speak { message, .. } = event {
                                 // === CONFUSED SPEECH - RANDOMLY DROP MESSAGES ===
                                 if rand::random::<bool>() {
@@ -245,13 +269,15 @@ async fn test_3_journal_subscription_chaos() {
                                     actions: vec![],
                                 })
                             }
-                        }
+                        })
                     })
-                    .on("Silence", move |_state, _event, _ctx: Arc<BabelContext>| async move {
+                    .on("Silence", move |_state, _event, _ctx: &mut BabelContext| {
                         // === GOD SILENCES THE BUILDERS ===
-                        Ok(Transition {
-                            next_state: BabelState::Silenced,
-                            actions: vec![],
+                        Box::pin(async move {
+                            Ok(Transition {
+                                next_state: BabelState::Silenced,
+                                actions: vec![],
+                            })
                         })
                     })
                     .done()
@@ -263,13 +289,18 @@ async fn test_3_journal_subscription_chaos() {
             for j in 0..100 {
                 let message = format!("Builder {} speaks message {} in {}", i, j, lang);
                 fsm.handle(
-                    BabelEvent::Speak { message, language: lang.clone() },
-                    ctx_clone.clone()
-                ).await.unwrap();
+                    BabelEvent::Speak {
+                        message,
+                        language: lang.clone(),
+                    },
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
 
                 // Occasional chaos injection (but not too early!)
                 if j == 80 {
-                    fsm.handle(BabelEvent::Overflow, ctx_clone.clone()).await.unwrap();
+                    fsm.handle(BabelEvent::Overflow, &mut ctx).await.unwrap();
                 }
 
                 // Divine mercy - small delays between messages
@@ -279,7 +310,7 @@ async fn test_3_journal_subscription_chaos() {
             }
 
             // Final silence
-            fsm.handle(BabelEvent::Silence, ctx_clone.clone()).await.unwrap();
+            fsm.handle(BabelEvent::Silence, &mut ctx).await.unwrap();
             fsm
         });
 
@@ -291,14 +322,17 @@ async fn test_3_journal_subscription_chaos() {
     let mut listener_handles = vec![];
 
     for filter in filters {
-        let ctx_clone = ctx.clone();
+        let subscribers = subscribers.clone();
         let filter_str = filter.to_string();
 
         let handle = tokio::spawn(async move {
             let (tx, mut rx) = mpsc::channel(100); // Limited capacity!
 
             // Register subscriber
-            ctx_clone.subscribers.write().await.insert(filter_str.clone(), tx);
+            subscribers
+                .write()
+                .await
+                .insert(filter_str.clone(), tx);
 
             let mut received_count = 0;
             let mut last_vector_clock: HashMap<String, usize> = HashMap::new();
