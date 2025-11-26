@@ -424,6 +424,32 @@ Already done as part of 0.2:
 2. Optionally:
    - Add debug‑time checks that the string keys used in builder code correspond to actual enum `variant_name()` values.
 
+### 7.5 Enforcement and Versioning Strategy
+
+Because `obzenflow_fsm` is currently only used by ObzenFlow/FlowState RS, we can be opinionated about enforcing the new DSL and use a deliberate breaking change once it is stable.
+
+- **Phase A (0.2.x – transition)**:
+  - Keep the existing stringly builder API (`when(&str)`, `on(&str, …)`, etc.) public but:
+    - Mark it `#[deprecated]` with clear guidance: “Use the `fsm!`/typed DSL instead”.
+    - Build ObzenFlow and this crate with `-D warnings` so any remaining string usage in our own code becomes a compile error.
+  - Migrate all internal FSMs (runtime supervisors, tests, examples) to the typed DSL until there are zero internal uses of the string API.
+
+- **Phase B (0.3.0 – hard break)**:
+  - Bump `obzenflow_fsm` to **0.3.0** and enforce the DSL:
+    - Make string-based builder methods `pub(crate)` or remove them from the public API entirely.
+    - Keep them only as internal helpers that the macros expand to.
+  - Public surface becomes:
+    - The typed DSL macros (`fsm!` / `define_fsm!`).
+    - Any typed builder helpers they require (but no raw `&str` state/event entry points).
+  - Any remaining direct string usage (inside ObzenFlow or other consumers) will simply fail to compile against 0.3.0, which is acceptable given the known user set and gives us strong guarantees that all FSMs are defined via the typed front‑end.
+
+- **Optional escape hatch for dynamic FSMs**:
+  - If we ever need truly dynamic/config‑driven FSM construction, we can:
+    - Hide the string builder API behind a feature flag (e.g., `dynamic-fsm`), disabled by default.
+    - Keep the default (`no features`) path strictly typed‑DSL‑only.
+
+The goal is that after the 0.3.0 cut, every production FSM in ObzenFlow is defined in terms of enum variants and the macro DSL, with the string API effectively reserved (and possibly gated) for rare, dynamic use cases or internal macro expansions.
+
 At the end of 002, we expect:
 
 - Most real FSMs (runtime, library examples) to be defined with the macro DSL.
