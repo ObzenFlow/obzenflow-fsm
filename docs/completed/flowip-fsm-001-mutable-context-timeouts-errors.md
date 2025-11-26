@@ -1,7 +1,7 @@
 ## FLOWIP-FSM-001: Mutable-Context FSM API, Timeouts, and Errors
 
 **Version target**: obzenflow-fsm `0.2.x`  
-**Status**: Completed in `obzenflow-fsm` 0.2.x
+**Status**: Completed in `obzenflow-fsm` 0.2.x (integrated into FlowState RS via FLOWIP‑080p)
 
 ### Single Mutable-Context API in `obzenflow_fsm`
 
@@ -21,7 +21,7 @@ For ObzenFlow and FLOWIP‑080p/080p‑part‑2, the ideal model is:
 
 There are no external users of `obzenflow_fsm`, so we can evolve the library to a **single, `&mut Context` API** and drop the `Arc<C>` context usage entirely.
 
-This document describes that migration.
+This document describes that migration and how the resulting 0.2.x API underpins FLOWIP‑080p’s “FSM-owned state” model in FlowState RS.
 
 ---
 
@@ -286,8 +286,9 @@ This yields a single, coherent ObzenFlow FSM API aligned with FLOWIP‑080p’s 
 
 **Next steps (beyond 001)**
 
-- Runtime adoption:
-  - Ensure all ObzenFlow runtime supervisors and FSM integrations are consistently using the 0.2 `&mut Context` API, removing any remaining `Arc<C>`-style usage except where genuinely shared resources are required.
+- Runtime adoption (done for FlowState RS as part of FLOWIP‑080p):
+  - FlowState RS supervisors (stateful, join, sink, pipeline) now use the 0.2 `&mut Context` API exclusively; there is no remaining Arc‑based context path in the runtime.
+  - Runtime FSM definitions call `FsmBuilder::strict()` by default so that duplicate handlers and invalid initial states become build‑time/boot‑time failures rather than latent bugs, which aligns with 080p’s emphasis on fail‑fast, deterministic draining and contracts.
 - Additional validation (potential follow-up FlowIP):
   - Consider extending strict mode with more invariants once the macro DSL from `flowip-fsm-002-builder-dsl.md` is in place (e.g., coverage checks per state, validation of known state/event sets).
 - DSL front-end:
