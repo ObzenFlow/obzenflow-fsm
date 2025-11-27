@@ -1,6 +1,6 @@
 # FLOWIP-FSM-002: Typed Builder DSL for `obzenflow_fsm`
 
-Status: Draft (post‑0.2 direction)  
+Status: In progress (Phase 1 implemented in 0.2.x)  
 Authors: obzenflow  
 Depends on: `flowip-fsm-001-mutable-context-timeouts-errors.md`
 
@@ -73,6 +73,14 @@ Given how the rest of obzenflow is evolving (DSLs, macros, schema‑like definit
 We choose **Option 3** from previous discussions:
 
 > Keep the internal string‑based handler map, but introduce a **macro‑based, strongly typed front‑end** that lets users define FSMs in terms of enum variants and pattern‑matching, not raw strings.
+
+Concretely, this means:
+
+- Adding a small **proc‑macro helper crate** (e.g. `obzenflow-fsm-macros`) that lives alongside the core library and is re‑exported from `obzenflow-fsm`.
+- Providing:
+  - `#[derive(StateVariant)]` and `#[derive(EventVariant)]` derive macros that implement the existing `StateVariant` / `EventVariant` traits.
+  - An `fsm!` macro that expands to calls into the existing `FsmBuilder` API.
+- Keeping the core runtime model, error types, and `StateMachine` implementation **unchanged**; 002 is a front‑end ergonomics layer.
 
 ### 4.1 High‑level shape
 
@@ -186,6 +194,21 @@ The builder DSL macro would then:
 - Use `Event::variant_name()` similarly for event names.
 
 This lets us keep **string names as public API** (for logs, metrics, journals) while letting **user code work in terms of enum variants**.
+
+#### 5.3.3 Derive macro semantics
+
+To minimize drift between “manual” trait impls and derive‑generated ones, we standardize:
+
+- `#[derive(StateVariant)]` generates:
+  - `impl ::obzenflow_fsm::StateVariant for MyEnum { fn variant_name(&self) -> &str { match self { MyEnum::Variant { .. } => "Variant", … } } }`.
+  - Fields are ignored; only the variant identifier is used.
+- `#[derive(EventVariant)]` generates the analogous `EventVariant` impl.
+
+This matches current hand‑written implementations in the crate and ensures that:
+
+- Journal/log strings remain **stable** (we continue to emit variant names like `"Initialized"`, `"Ready"`, `"Eof"`).
+- Enum refactors that only change payloads do not affect identity strings.
+- The macro layer never needs to know about field structure; it operates purely on variant names.
 
 ### 5.3 Concrete `fsm!` syntax sketch
 
@@ -397,63 +420,86 @@ Already done as part of 0.2:
 
 002 starts **after** this baseline is stable.
 
-### 7.2 Phase 1 – Macro + derive prototype
+### 7.2 Phase 1 – Macro + derive prototype (0.2.x)
 
-1. Implement `#[derive(StateVariant)]` and `#[derive(EventVariant)]` in a small proc‑macro crate (or in `obzenflow_fsm` if we keep macros local).
-2. Implement a first version of the `fsm!`/`define_fsm!` macro:
-   - Support a minimal subset: `state`, `on`, and initial state.
-   - Expand to current builder usage with `Box::pin` async handlers.
-3. Migrate one non‑trivial FSM (e.g., the pipeline FSM in `obzenflow_runtime_services`) to the macro DSL:
-   - Keep the old builder usage nearby for reference and potential back‑compat testing.
+1. Add a small `obzenflow-fsm-macros` proc‑macro crate:
+   - `#[proc_macro_derive(StateVariant)]` and `#[proc_macro_derive(EventVariant)]` implementing the existing traits.
+   - An `fsm!` macro re‑exported from `obzenflow-fsm`.
+2. Implement an initial `fsm!` macro with support for:
+   - Top‑level `state:`, `event:`, `context:`, `action:`, and `initial:` declarations.
+   - `state` blocks with:
+     - `on` clauses mapping to `FsmBuilder::when().on().done()`.
+     - `timeout` clauses mapping to `FsmBuilder::when().timeout().on().done()` as needed.
+     - `on_entry` and `on_exit` clauses mapping to `FsmBuilder::on_entry` / `FsmBuilder::on_exit`.
+   - An optional `unhandled => …` block mapping to `FsmBuilder::when_unhandled`.
+   - Handler closures written as plain Rust `|state, event, ctx| { Box::pin(async move { … }) }`, passed directly into the existing handler types.
+3. Migrate the **FSM library itself** (tests/examples inside `obzenflow_fsm`) to the macro DSL to prove out ergonomics and expansion without changing runtime semantics:
+   - Add focused DSL tests (simple transition, entry/exit hooks, timeout, and top‑level `unhandled`).
+   - Keep the existing string‑builder tests in place as behavioural oracles during the transition.
 
-### 7.3 Phase 2 – Broader adoption in runtime
+**Phase 1 status:** implemented in `obzenflow-fsm` 0.2.x:
 
-1. Convert the other core runtime FSMs (stage lifecycle, join, stateful handlers) to the macro DSL.
+- `obzenflow-fsm-macros` exists with the derive macros and `fsm!`.
+- `fsm!` supports:
+  - Top‑level header + `unhandled`.
+  - Per‑state `on`, `timeout`, `on_entry`, and `on_exit` clauses.
+- New tests (`tests/test_dsl_basic.rs`, `tests/test_dsl_features.rs`) validate:
+  - Basic DSL transitions and actions.
+  - Entry/exit hooks and unhandled handlers.
+  - Timeout behaviour via `StateMachine::check_timeout`.
+
+### 7.3 Phase 2 – Full adoption in runtime (0.2.x)
+
+1. Convert the other core runtime FSMs (stage lifecycle, join, stateful handlers, sink/pipeline FSMs) in FlowState RS to the macro DSL.
 2. Ensure:
    - Journals and logs show the same state/event names as before.
-   - No behavior changes in timeouts, entry/exit hooks, or unhandled handling.
+   - No behavior changes in timeouts, entry/exit hooks, or unhandled handling (semantics remain those from FSM‑001 / 0.2).
 3. Update documentation and examples:
-   - Add a macro‑based FSM example alongside the simple builder example.
-   - Recommend the macro DSL for all new FSMs.
+   - Add macro‑based FSM examples alongside the simple builder example.
+   - Recommend the macro DSL as the default for all new FSMs.
 
-### 7.4 Phase 3 – Hardening and Lints
+### 7.4 Phase 3 – Hardening and Lints (0.2.x)
 
 1. Add guidance or lints:
    - Consider a feature flag that warns on `when("…")` / `on("…")` in production code (excluding tests).
-   - Or provide a `#[deprecated]` style hint on string overloads once all internal users are migrated.
+   - Provide a `#[deprecated]` style hint on string overloads once all internal users are migrated.
 2. Optionally:
    - Add debug‑time checks that the string keys used in builder code correspond to actual enum `variant_name()` values.
 
-### 7.5 Enforcement and Versioning Strategy
+### 7.5 Phase 4 – Enforcement and Versioning Strategy (0.3.0 and beyond)
 
-Because `obzenflow_fsm` is currently only used by ObzenFlow/FlowState RS, we can be opinionated about enforcing the new DSL and use a deliberate breaking change once it is stable.
+Because `obzenflow_fsm` is currently only used by ObzenFlow/FlowState RS, we can be opinionated about enforcing the new DSL and use a deliberate breaking change once it is stable. The plan is:
 
-- **Phase A (0.2.x – transition)**:
+- **Step 1 (0.2.x – migration + deprecation)**:
   - Keep the existing stringly builder API (`when(&str)`, `on(&str, …)`, etc.) public but:
     - Mark it `#[deprecated]` with clear guidance: “Use the `fsm!`/typed DSL instead”.
     - Build ObzenFlow and this crate with `-D warnings` so any remaining string usage in our own code becomes a compile error.
-  - Migrate all internal FSMs (runtime supervisors, tests, examples) to the typed DSL until there are zero internal uses of the string API.
+  - Migrate *all* internal FSMs (runtime supervisors, tests, examples) to the typed DSL until there are zero internal uses of the string API.
 
-- **Phase B (0.3.0 – hard break)**:
-  - Bump `obzenflow_fsm` to **0.3.0** and enforce the DSL:
-    - Make string-based builder methods `pub(crate)` or remove them from the public API entirely.
-    - Keep them only as internal helpers that the macros expand to.
+- **Step 2 (0.3.0 – hard break and stable base for 080p‑part‑2)**:
+  - Bump `obzenflow_fsm` to **0.3.0** once all FSMs have been migrated to the DSL.
+  - Enforce the DSL by:
+    - Making string-based builder methods `pub(crate)` or removing them from the public API entirely.
+    - Keeping them only as internal helpers that the macros expand to.
   - Public surface becomes:
     - The typed DSL macros (`fsm!` / `define_fsm!`).
     - Any typed builder helpers they require (but no raw `&str` state/event entry points).
-  - Any remaining direct string usage (inside ObzenFlow or other consumers) will simply fail to compile against 0.3.0, which is acceptable given the known user set and gives us strong guarantees that all FSMs are defined via the typed front‑end.
+  - This 0.3.0 release is the **stable semantic base** on which the 080p‑part‑2 concurrency/lock‑safety refactor will build. When we start 080p‑part‑2, we know:
+    - All FSMs are defined via the typed DSL.
+    - Strict mode and `&mut Context` semantics are already in place.
+
+- **Step 3 (post‑0.3 – concurrency work in FlowState RS)**:
+  - After 0.3.0 is cut, implement FLOWIP‑080p‑part‑2 in FlowState RS:
+    - Refactor contexts to owned, lock‑safe shapes.
+    - Apply “no guard across await” and task‑handle ownership semantics.
+    - Because FSM definitions are already type‑checked and uniform, 080p‑part‑2 can focus purely on concurrency/ownership without churn in FSM wiring.
 
 - **Optional escape hatch for dynamic FSMs**:
   - If we ever need truly dynamic/config‑driven FSM construction, we can:
     - Hide the string builder API behind a feature flag (e.g., `dynamic-fsm`), disabled by default.
     - Keep the default (`no features`) path strictly typed‑DSL‑only.
 
-The goal is that after the 0.3.0 cut, every production FSM in ObzenFlow is defined in terms of enum variants and the macro DSL, with the string API effectively reserved (and possibly gated) for rare, dynamic use cases or internal macro expansions.
-
-At the end of 002, we expect:
-
-- Most real FSMs (runtime, library examples) to be defined with the macro DSL.
-- String literals mostly relegated to tests, low‑level adapters, or very dynamic use cases.
+The goal is that after the 0.3.0 cut, every production FSM in ObzenFlow is defined in terms of enum variants and the macro DSL, with the string API effectively reserved (and possibly gated) for rare, dynamic use cases or internal macro expansions, and with 0.3.0 serving as the stable base for subsequent concurrency work.
 
 ## 8. Impact and Compatibility
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-11-26
+
+### Added
+- `fsm!` macro front-end with support for:
+  - Top-level `state` / `event` / `context` / `action` / `initial` declarations.
+  - Per-state `on` clauses, `timeout` clauses, and `on_entry` / `on_exit` hooks.
+  - Optional top-level `unhandled => handler;` mapping to `FsmBuilder::when_unhandled`.
+- New DSL-focused tests exercising the macro (`test_dsl_basic`, `test_dsl_features`).
+
+### Changed
+- Marked the string-based builder API as deprecated in preparation for `0.3.0`:
+  - `FsmBuilder::when(&str)`, `from_any()`, `on_entry(&str, …)`, `on_exit(&str, …)`.
+  - `WhenBuilder::on(&str, …)` and `TimeoutBuilder::on(&str, …)`.
+- Documented that these methods will become crate-private or be removed in `0.3.0`, leaving the typed DSL as the primary public entry point.
+
 ## [0.2.0] - 2025-11-25
 
 ### Changed
@@ -51,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example FSM implementations
 - Test suite demonstrating advanced patterns
 
-[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.1
 [0.2.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.0
 [0.1.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.1.0
