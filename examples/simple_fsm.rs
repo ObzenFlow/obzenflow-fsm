@@ -1,6 +1,6 @@
-//! Simple FSM example with Arc<Context> pattern
+//! Simple FSM example using the `fsm!` DSL.
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{fsm, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -50,7 +50,7 @@ impl FsmContext for DoorContext {}
 #[async_trait::async_trait]
 impl FsmAction for DoorAction {
     type Context = DoorContext;
-    
+
     async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             DoorAction::Ring => {
@@ -67,9 +67,15 @@ impl FsmAction for DoorAction {
 
 #[tokio::main]
 async fn main() {
-    let fsm = FsmBuilder::new(DoorState::Closed)
-        .when("Closed")
-            .on("Open", |_state, _event, ctx: &mut DoorContext| {
+    let mut door = fsm! {
+        state:   DoorState;
+        event:   DoorEvent;
+        context: DoorContext;
+        action:  DoorAction;
+        initial: DoorState::Closed;
+
+        state DoorState::Closed {
+            on DoorEvent::Open => |_state: &DoorState, _event: &DoorEvent, ctx: &mut DoorContext| {
                 Box::pin(async move {
                     ctx.log.write().await.push("Opening door".to_string());
                     Ok(Transition {
@@ -77,10 +83,11 @@ async fn main() {
                         actions: vec![DoorAction::Ring],
                     })
                 })
-            })
-            .done()
-        .when("Open")
-            .on("Close", |_state, _event, ctx: &mut DoorContext| {
+            };
+        }
+
+        state DoorState::Open {
+            on DoorEvent::Close => |_state: &DoorState, _event: &DoorEvent, ctx: &mut DoorContext| {
                 Box::pin(async move {
                     ctx.log.write().await.push("Closing door".to_string());
                     Ok(Transition {
@@ -88,11 +95,10 @@ async fn main() {
                         actions: vec![DoorAction::Log("Door closed".to_string())],
                     })
                 })
-            })
-            .done()
-        .build();
+            };
+        }
+    };
 
-    let mut door = fsm;
     let mut ctx = DoorContext {
         log: Arc::new(RwLock::new(vec![])),
     };

@@ -1,6 +1,7 @@
 //! Simple tests that demonstrate core FSM functionality
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -76,7 +77,7 @@ impl FsmAction for SimpleAction {
 
 #[tokio::test]
 async fn test_simple_transitions() {
-    let fsm = FsmBuilder::new(SimpleState::Idle)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
         .on("Start", |_state, _event, ctx: &mut SimpleContext| {
             Box::pin(async move {
@@ -165,7 +166,7 @@ async fn test_simple_transitions() {
 
 #[tokio::test]
 async fn test_entry_exit_handlers() {
-    let fsm = FsmBuilder::new(SimpleState::Idle)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
         .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
             Box::pin(async move {
@@ -237,7 +238,7 @@ async fn test_entry_exit_handlers() {
 async fn test_timeout() {
     use tokio::time::sleep;
 
-    let fsm = FsmBuilder::new(SimpleState::Idle)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
         .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
             Box::pin(async move {
@@ -286,7 +287,7 @@ async fn test_timeout() {
 
 #[tokio::test]
 async fn test_unhandled_events() {
-    let fsm = FsmBuilder::<SimpleState, SimpleEvent, SimpleContext, SimpleAction>::new(SimpleState::Idle)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::<SimpleState, SimpleEvent, SimpleContext, SimpleAction>::new(SimpleState::Idle)
         .when("Idle")
         .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
             Box::pin(async move {

@@ -3,7 +3,8 @@
 //! Many of these tests are commented out because they SHOULD NOT compile.
 //! They demonstrate the type safety of our FSM implementation.
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 use std::fmt::Debug;
 use std::sync::Arc;
 
