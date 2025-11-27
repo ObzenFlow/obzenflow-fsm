@@ -1,8 +1,9 @@
 //! Comprehensive tests for the FSM implementation
-//! 
+//!
 //! These tests push edge cases and verify compile-time safety
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -1021,7 +1022,7 @@ async fn test_error_handling() {
         }
     }
 
-    let fsm = FsmBuilder::new(FallibleState::Ready)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(FallibleState::Ready)
         .when("Ready")
             .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 let should_fail = match event {

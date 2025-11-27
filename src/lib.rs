@@ -1,9 +1,14 @@
 //! Async-first Finite State Machine library inspired by Akka FSM
-//! 
+//!
 //! Core principle: State(S) × Event(E) → Actions(A), State(S')
-//! 
-//! "If we are in state S and the event E occurs, we should perform the actions A 
+//!
+//! "If we are in state S and the event E occurs, we should perform the actions A
 //! and make a transition to the state S'."
+
+// Allow this crate to refer to itself via `obzenflow_fsm` so that
+// proc-macro expansions using `::obzenflow_fsm::...` also work in
+// the crate's own tests.
+extern crate self as obzenflow_fsm;
 
 // Module declarations
 pub mod builder;
@@ -13,13 +18,29 @@ pub mod machine;
 pub mod types;
 
 // Re-export main types for convenience
-pub use builder::FsmBuilder;
 pub use error::FsmError;
 pub use machine::StateMachine;
 pub use types::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 
 // Re-export handler types for advanced usage
 pub use handlers::{TransitionHandler, StateHandler, TimeoutHandler};
+
+/// Internal types used by the `fsm!` macro expansion.
+///
+/// This module is **not** intended for direct use; it exists so that
+/// proc-macro expansions can refer to a stable, public path while
+/// signalling that the underlying types are implementation details.
+#[doc(hidden)]
+pub mod internal {
+    #[allow(deprecated)]
+    pub use crate::builder::FsmBuilder;
+}
+
+// Re-export proc-macro helpers (derives + DSL).
+// This allows users to write:
+//   #[derive(StateVariant, EventVariant)]
+//   let fsm = fsm! { ... };
+pub use obzenflow_fsm_macros::{fsm, EventVariant as EventVariantDerive, StateVariant as StateVariantDerive};
 
 #[cfg(test)]
 mod tests {
@@ -59,7 +80,6 @@ mod tests {
             }
         }
     }
-
     #[derive(Clone, Debug, PartialEq)]
     enum TestAction {
         Log(String),
@@ -96,23 +116,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_fsm() {
-        let fsm = FsmBuilder::<TestState, TestEvent, TestContext, TestAction>::new(TestState::Idle)
-            .when("Idle")
-            .on(
-                "Start",
-                |_state: &TestState, _event: &TestEvent, _ctx: &mut TestContext| {
+        let mut state_machine = crate::fsm! {
+            state:   TestState;
+            event:   TestEvent;
+            context: TestContext;
+            action:  TestAction;
+            initial: TestState::Idle;
+
+            state TestState::Idle {
+                on TestEvent::Start => |_state: &TestState, _event: &TestEvent, _ctx: &mut TestContext| {
                     Box::pin(async move {
                         Ok(Transition {
                             next_state: TestState::Active { count: 0 },
                             actions: vec![TestAction::Log("Starting".into())],
                         })
                     })
-                },
-            )
-            .done()
-            .build();
-
-        let mut state_machine = fsm;
+                };
+            }
+        };
         let mut ctx = TestContext { total: 0 };
         
         // Test transition

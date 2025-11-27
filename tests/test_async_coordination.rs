@@ -31,7 +31,8 @@
 //! - Tests our ability to handle complex inter-FSM communication
 //! - Proves the FSM can maintain order even when demons attack from multiple angles
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -227,7 +228,7 @@ async fn test_2_async_coordination_nightmare() {
     let pipeline_handle = tokio::spawn(async move {
         let mut ctx = pipeline_ctx;
 
-        let mut fsm = FsmBuilder::<PipelineState, PipelineEvent, CoordinationContext, CoordAction>::new(PipelineState::Initializing)
+        let mut fsm = obzenflow_fsm::internal::FsmBuilder::<PipelineState, PipelineEvent, CoordinationContext, CoordAction>::new(PipelineState::Initializing)
             .when("Initializing")
                 .on("Start", move |_state, _event, ctx: &mut CoordinationContext| {
                     Box::pin(async move {
@@ -378,7 +379,7 @@ async fn test_2_async_coordination_nightmare() {
         let handle = tokio::spawn(async move {
             let mut ctx = stage_ctx;
 
-            let mut fsm = FsmBuilder::<StageState, StageEvent, CoordinationContext, CoordAction>::new(StageState::Uninitialized)
+            let mut fsm = obzenflow_fsm::internal::FsmBuilder::<StageState, StageEvent, CoordinationContext, CoordAction>::new(StageState::Uninitialized)
                 .when("Uninitialized")
                     .on("Initialize", move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {

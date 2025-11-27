@@ -1,7 +1,8 @@
 //! Test to ensure StateMachine can only be created through the builder
 //! This test will fail to compile if StateMachine::new becomes public
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 
 #[derive(Clone, Debug, PartialEq)]
 enum TestState {

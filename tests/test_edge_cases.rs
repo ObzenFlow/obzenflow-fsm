@@ -2,7 +2,8 @@
 //! 
 //! These tests push the FSM to its limits with extreme scenarios
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -79,7 +80,7 @@ async fn test_deeply_nested_state() {
         map
     };
 
-    let fsm = FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 { data: initial_data })
+    let fsm = obzenflow_fsm::internal::FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 { data: initial_data })
         .when("Level1")
         .on("Transform", |state, _event, _ctx: &mut EmptyContext| {
             let data = match state {
@@ -197,7 +198,7 @@ async fn test_zero_sized_types() {
         }
     }
 
-    let fsm = FsmBuilder::new(ZstState::Empty)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(ZstState::Empty)
         .when("Empty")
         .on("ZstEvent", |_state, _event, _ctx: &mut ZstContext| {
             Box::pin(async {
@@ -314,7 +315,7 @@ async fn test_complex_async_handlers() {
         }
     }
 
-    let fsm = FsmBuilder::new(AsyncState::Idle)
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(AsyncState::Idle)
         .when("Idle")
         .on("StartWork", |_state, event, ctx: &mut AsyncContext| {
             let task_count = match event {
@@ -362,7 +363,7 @@ async fn test_complex_async_handlers() {
         .done()
         .when("Working")
         .on("ProcessBatch", |state, event, ctx: &mut AsyncContext| {
-            let (tasks_completed, mut parallel_tasks) = match state {
+            let (tasks_completed, mut parallel_tasks): (u32, Vec<String>) = match state {
                 AsyncState::Working {
                     tasks_completed,
                     parallel_tasks,
@@ -423,7 +424,7 @@ async fn test_complex_async_handlers() {
             })
         })
         .on("FinishWork", |state, _event, ctx: &mut AsyncContext| {
-            let tasks_completed = match state {
+            let tasks_completed: u32 = match state {
                 AsyncState::Working { tasks_completed, .. } => *tasks_completed,
                 AsyncState::Completed { total_tasks, .. } => *total_tasks,
                 _ => 0,
@@ -560,7 +561,7 @@ async fn test_state_equality_edge_cases() {
         }
     }
 
-    let fsm = FsmBuilder::new(FloatState::Normal { value: 1.0 })
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(FloatState::Normal { value: 1.0 })
         .when("Normal")
         .on("MakeNan", |_state, _event, _ctx: &mut FloatContext| {
             Box::pin(async {
@@ -682,7 +683,7 @@ async fn test_many_states() {
     }
 
     let mut builder =
-        FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
+        obzenflow_fsm::internal::FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
     
     // Add transitions for each state
     for i in 0..9 {
