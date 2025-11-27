@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-11-27
+
+### Changed
+- Promoted the `fsm!` macro and derives (`StateVariant`, `EventVariant`) to the primary public front-end for building state machines.
+- Removed `pub use builder::FsmBuilder` from the crate root; the builder now lives under `obzenflow_fsm::internal::FsmBuilder` and is intended only for macro expansion and focused tests.
+- Tightened builder-time validation so strict mode is always enabled (duplicate `(state, event)` handlers are rejected and the initial state must have at least one transition or timeout).
+- Aligned `StateMachine` error behaviour with the design docs by returning structured `FsmError` for unhandled events and builder failures instead of stringly errors or silent success.
+
+### Migration
+- Updated crate examples and internal tests to prefer the `fsm!` DSL where it improves clarity, retaining legacy builder coverage only in dedicated tests that exercise `internal::FsmBuilder`.
+- Coordinated with ObzenFlow so runtime supervisors now construct FSMs exclusively via `fsm!` and a `StateMachine`-returning API, with no public dependency on `FsmBuilder`.
+
 ## [0.2.1] - 2025-11-26
 
 ### Added
@@ -66,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example FSM implementations
 - Test suite demonstrating advanced patterns
 
-[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.0
 [0.2.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.1
 [0.2.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.0
 [0.1.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.1.0
