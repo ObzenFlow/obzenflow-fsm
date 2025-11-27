@@ -22,7 +22,8 @@
 //! - Some operations can't be made idempotent
 //! - Tests if our FSM design exposes or hides these issues
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -130,7 +131,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     };
 
     // === BUILD THE BEAST'S FSM ===
-    let fsm = FsmBuilder::new(BeastState::Counting {
+    let fsm = obzenflow_fsm::internal::FsmBuilder::new(BeastState::Counting {
         balance: 0,
         operations: vec![],
         operation_ids: std::collections::HashSet::new(),
@@ -300,7 +301,7 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     };
 
     // Create another FSM and process in reverse order
-    let mut machine2 = FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
+    let mut machine2 = obzenflow_fsm::internal::FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
         balance: 0,
         operations: vec![],
         operation_ids: std::collections::HashSet::new(),

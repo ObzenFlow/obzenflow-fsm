@@ -17,7 +17,8 @@
 //! - Tests Arc<Context> with complex async I/O patterns
 //! - Proves the journal can maintain order even when everyone speaks at once
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};

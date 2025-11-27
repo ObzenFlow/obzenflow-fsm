@@ -1,7 +1,8 @@
 //! This test file demonstrates that StateMachine can only be created via FsmBuilder
 //! It includes examples that would fail to compile if uncommented
 
-use obzenflow_fsm::{FsmBuilder, FsmError, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{FsmError, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
 
 // Test types
 #[derive(Clone, Debug, PartialEq)]

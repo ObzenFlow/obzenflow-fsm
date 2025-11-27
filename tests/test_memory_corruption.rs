@@ -24,7 +24,8 @@
 //! - Proves Rust's ownership is divinely inspired
 //! - The 666th line should be in this test (if we reach it)
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -307,7 +308,7 @@ async fn test_6_memory_corruption_gauntlet() {
             let _memory: Vec<u8> = vec![0; 1024 * 1024];
 
             // Build FSM
-            let mut fsm = FsmBuilder::<CorruptionState, CorruptionEvent, CorruptionContext, CorruptionAction>::new(
+            let mut fsm = obzenflow_fsm::internal::FsmBuilder::<CorruptionState, CorruptionEvent, CorruptionContext, CorruptionAction>::new(
                 CorruptionState::Spawning { id: i }
             )
                 .when("Spawning")

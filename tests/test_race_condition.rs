@@ -22,7 +22,8 @@
 //! - This is how stages track in-flight events during drain
 //! - If our Arc<Context> pattern can't handle this, we're doomed (literally)
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

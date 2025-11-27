@@ -18,7 +18,8 @@
 //! - Tests if our FSM honors the sacred AT LEAST ONCE covenant
 //! - "Beg for meat, get meat, no more hungry" - but NEVER drop the meat
 
-use obzenflow_fsm::{FsmBuilder, StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
@@ -150,7 +151,7 @@ async fn test_5_timeout_cancellation_inferno() {
     let (tx, mut rx) = mpsc::channel(100);
     ctx.downstream.write().await.push(tx);
 
-    let mut machine1 = FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
+    let mut machine1 = obzenflow_fsm::internal::FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
         data_buffer: vec![],
         in_flight: 0,
     })
@@ -163,7 +164,7 @@ async fn test_5_timeout_cancellation_inferno() {
                         ctx.timeout_count.fetch_add(1, Ordering::SeqCst);
 
                         if let PurgatoryState::Materializing { data_buffer, in_flight } = &state {
-                            if !data_buffer.is_empty() || *in_flight > 0 {
+                    if !data_buffer.is_empty() || *in_flight > 0 {
                                 println!(
                                     "⚠️ TIMEOUT WITH {} BUFFERED, {} IN FLIGHT - INITIATING JONESTOWN",
                                     data_buffer.len(),
@@ -174,7 +175,7 @@ async fn test_5_timeout_cancellation_inferno() {
                                     next_state: PurgatoryState::DrinkingKoolAid(
                                         format!(
                                             "Timeout with {} uncommitted messages",
-                                            data_buffer.len() + in_flight
+                                            data_buffer.len() + *in_flight
                                         ),
                                     ),
                                     actions: vec![PurgatoryAction::PoisonDownstream],
@@ -304,7 +305,7 @@ async fn test_5_timeout_cancellation_inferno() {
     let (tx2, _rx2) = mpsc::channel(100);
     ctx2.downstream.write().await.push(tx2);
 
-    let mut machine2 = FsmBuilder::new(PurgatoryState::Materializing {
+    let mut machine2 = obzenflow_fsm::internal::FsmBuilder::new(PurgatoryState::Materializing {
         data_buffer: vec![],
         in_flight: 0,
     })
@@ -315,13 +316,13 @@ async fn test_5_timeout_cancellation_inferno() {
                     let state = state.clone();
                     Box::pin(async move {
                         if let PurgatoryState::Materializing { data_buffer, in_flight } = &state {
-                            if !data_buffer.is_empty() || *in_flight > 0 {
+                    if !data_buffer.is_empty() || *in_flight > 0 {
                                 // JONESTOWN PROTOCOL!
                                 Ok(Transition {
                                     next_state: PurgatoryState::DrinkingKoolAid(
                                         format!(
                                             "Timeout with {} messages at risk",
-                                            data_buffer.len() + in_flight
+                                            data_buffer.len() + *in_flight
                                         ),
                                     ),
                                     actions: vec![PurgatoryAction::PoisonDownstream],
@@ -417,7 +418,7 @@ async fn test_5_timeout_cancellation_inferno() {
     drop(rx3); // Kill the receiver!
     ctx3.downstream.write().await.push(tx3);
 
-    let mut machine3 = FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
+    let mut machine3 = obzenflow_fsm::internal::FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
         data_buffer: vec![],
         in_flight: 0,
     })
