@@ -1,6 +1,6 @@
 # FLOWIP-FSM-002: Typed Builder DSL for `obzenflow_fsm`
 
-Status: In progress (Phase 1 implemented in 0.2.x)  
+Status: Completed (implemented through 0.3.x)  
 Authors: obzenflow  
 Depends on: `flowip-fsm-001-mutable-context-timeouts-errors.md`
 
