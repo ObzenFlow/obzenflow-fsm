@@ -36,7 +36,11 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
     {
         // Build the `.on(...)` chain for this state.
         let mut on_chain: TokenStream = TokenStream::new();
-        for OnHandler { event_path, handler } in handlers {
+        for OnHandler {
+            event_path,
+            handler,
+        } in handlers
+        {
             // Use the final path segment as the stable string name.
             let ident = event_path
                 .path
@@ -64,8 +68,7 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
         let state_lit = LitStr::new(&state_ident, state_path.path.span());
 
         // Optional timeout chain: `.timeout(duration, handler)` after `.when`.
-        let timeout_chain: TokenStream = if let Some(TimeoutSpec { duration, handler }) = timeout
-        {
+        let timeout_chain: TokenStream = if let Some(TimeoutSpec { duration, handler }) = timeout {
             quote! { .when(#state_lit).timeout(#duration, #handler) }
         } else {
             quote! { .when(#state_lit) }

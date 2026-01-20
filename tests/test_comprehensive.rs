@@ -2,21 +2,38 @@
 //!
 //! These tests push edge cases and verify compile-time safety
 
-use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+#![allow(deprecated)]
+#![allow(dead_code)]
+
 use async_trait::async_trait;
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
 use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
 
 /// Test complex state with nested data
 #[derive(Clone, Debug, PartialEq)]
 enum ConnectionState {
-    Disconnected { retry_count: u32 },
-    Connecting { attempt: u32, started_at: std::time::Instant },
-    Connected { session_id: String, heartbeat_count: u64 },
-    Reconnecting { old_session: String, attempt: u32 },
-    Failed { reason: String, permanent: bool },
+    Disconnected {
+        retry_count: u32,
+    },
+    Connecting {
+        attempt: u32,
+        started_at: std::time::Instant,
+    },
+    Connected {
+        session_id: String,
+        heartbeat_count: u64,
+    },
+    Reconnecting {
+        old_session: String,
+        attempt: u32,
+    },
+    Failed {
+        reason: String,
+        permanent: bool,
+    },
 }
 
 impl StateVariant for ConnectionState {
@@ -67,14 +84,14 @@ enum ConnectionAction {
 #[async_trait]
 impl FsmAction for ConnectionAction {
     type Context = ConnectionContext;
-    
+
     async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             ConnectionAction::OpenSocket(endpoint) => {
                 let mut socket = ctx.socket_manager.lock().await;
                 socket.is_open = true;
                 ctx.event_log
-                    .send(format!("Socket opened to {}", endpoint))
+                    .send(format!("Socket opened to {endpoint}"))
                     .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
@@ -88,16 +105,14 @@ impl FsmAction for ConnectionAction {
             }
             ConnectionAction::ScheduleRetry(duration) => {
                 ctx.event_log
-                    .send(format!("Scheduled retry in {:?}", duration))
+                    .send(format!("Scheduled retry in {duration:?}"))
                     .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
-            ConnectionAction::IncrementHeartbeat => {
-                Ok(())
-            }
+            ConnectionAction::IncrementHeartbeat => Ok(()),
             ConnectionAction::LogError(msg) => {
                 ctx.event_log
-                    .send(format!("ERROR: {}", msg))
+                    .send(format!("ERROR: {msg}"))
                     .map_err(|e| obzenflow_fsm::FsmError::HandlerError(e.to_string()))?;
                 Ok(())
             }
@@ -139,23 +154,30 @@ struct ConnectionMetrics {
 #[tokio::test]
 async fn test_complex_state_transitions() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    
+
     let fsm = FsmBuilder::new(ConnectionState::Disconnected { retry_count: 0 })
         .when("Disconnected")
-            .on("Connect", |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+        .on(
+            "Connect",
+            |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let endpoint = match event {
                     ConnectionEvent::Connect { endpoint } => endpoint.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 let retry_count = match state {
-                    ConnectionState::Disconnected { retry_count } => retry_count.clone(),
+                    ConnectionState::Disconnected { retry_count } => *retry_count,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
-                    ctx.event_log.send(format!("Connecting to {} (attempt #{})", endpoint, retry_count + 1)).unwrap();
-                    
+                    ctx.event_log
+                        .send(format!(
+                            "Connecting to {endpoint} (attempt #{})",
+                            retry_count + 1
+                        ))
+                        .unwrap();
+
                     Ok(Transition {
                         next_state: ConnectionState::Connecting {
                             attempt: retry_count + 1,
@@ -164,19 +186,23 @@ async fn test_complex_state_transitions() {
                         actions: vec![ConnectionAction::OpenSocket(endpoint)],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Connecting")
-            .timeout(Duration::from_secs(5), |state: &ConnectionState, ctx: &mut ConnectionContext| {
+        .timeout(
+            Duration::from_secs(5),
+            |state: &ConnectionState, ctx: &mut ConnectionContext| {
                 let attempt = match state {
-                    ConnectionState::Connecting { attempt, .. } => attempt.clone(),
+                    ConnectionState::Connecting { attempt, .. } => *attempt,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
-                    ctx.event_log.send("Connection timeout".to_string()).unwrap();
-                    
+                    ctx.event_log
+                        .send("Connection timeout".to_string())
+                        .unwrap();
+
                     if attempt >= 3 {
                         Ok(Transition {
                             next_state: ConnectionState::Failed {
@@ -190,7 +216,9 @@ async fn test_complex_state_transitions() {
                         })
                     } else {
                         Ok(Transition {
-                            next_state: ConnectionState::Disconnected { retry_count: attempt },
+                            next_state: ConnectionState::Disconnected {
+                                retry_count: attempt,
+                            },
                             actions: vec![
                                 ConnectionAction::CloseSocket,
                                 ConnectionAction::ScheduleRetry(Duration::from_secs(
@@ -200,17 +228,20 @@ async fn test_complex_state_transitions() {
                         })
                     }
                 })
-            })
-            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+            },
+        )
+        .on(
+            "ConnectionEstablished",
+            |_state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let session_id = match event {
                     ConnectionEvent::ConnectionEstablished { session_id } => session_id.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_connections += 1;
-                    
+
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
                             session_id,
@@ -219,21 +250,25 @@ async fn test_complex_state_transitions() {
                         actions: vec![],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Connected")
-            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+        .on(
+            "Heartbeat",
+            |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let (session_id, heartbeat_count) = match state {
-                    ConnectionState::Connected { session_id, heartbeat_count } => 
-                        (session_id.clone(), *heartbeat_count),
+                    ConnectionState::Connected {
+                        session_id,
+                        heartbeat_count,
+                    } => (session_id.clone(), *heartbeat_count),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_heartbeats += 1;
-                    
+
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
                             session_id,
@@ -242,21 +277,26 @@ async fn test_complex_state_transitions() {
                         actions: vec![ConnectionAction::IncrementHeartbeat],
                     })
                 })
-            })
-            .on("ConnectionLost", |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+            },
+        )
+        .on(
+            "ConnectionLost",
+            |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let session_id = match state {
                     ConnectionState::Connected { session_id, .. } => session_id.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 let reason = match event {
                     ConnectionEvent::ConnectionLost { reason } => reason.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
-                    ctx.event_log.send(format!("Connection lost: {}", reason)).unwrap();
-                    
+                    ctx.event_log
+                        .send(format!("Connection lost: {reason}"))
+                        .unwrap();
+
                     Ok(Transition {
                         next_state: ConnectionState::Reconnecting {
                             old_session: session_id,
@@ -268,16 +308,18 @@ async fn test_complex_state_transitions() {
                         ],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Reconnecting")
-            .on("ConnectionEstablished", |_state: &ConnectionState, event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+        .on(
+            "ConnectionEstablished",
+            |_state: &ConnectionState, event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 let session_id = match event {
                     ConnectionEvent::ConnectionEstablished { session_id } => session_id.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
@@ -287,42 +329,46 @@ async fn test_complex_state_transitions() {
                         actions: vec![],
                     })
                 })
-            })
-            .on("GiveUp", |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+            },
+        )
+        .on(
+            "GiveUp",
+            |state: &ConnectionState, _event: &ConnectionEvent, ctx: &mut ConnectionContext| {
                 let old_session = match state {
                     ConnectionState::Reconnecting { old_session, .. } => old_session.clone(),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     let mut metrics = ctx.metrics.lock().await;
                     metrics.total_failures += 1;
-                    
+
                     Ok(Transition {
                         next_state: ConnectionState::Failed {
-                            reason: format!("Failed to reconnect session {}", old_session),
+                            reason: format!("Failed to reconnect session {old_session}"),
                             permanent: false,
                         },
-                        actions: vec![
-                            ConnectionAction::LogError("Reconnection failed".to_string()),
-                        ],
+                        actions: vec![ConnectionAction::LogError(
+                            "Reconnection failed".to_string(),
+                        )],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         // Global handler for any unhandled event
-        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
-            let state = state.clone();
-            let event = event.clone();
-            Box::pin(async move {
-                ctx.event_log.send(
-                    format!("Unhandled event {:?} in state {:?}", event, state)
-                ).unwrap();
-                Ok(())
-            })
-        })
-        
+        .when_unhandled(
+            |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+                let state = state.clone();
+                let event = event.clone();
+                Box::pin(async move {
+                    ctx.event_log
+                        .send(format!("Unhandled event {event:?} in state {state:?}"))
+                        .unwrap();
+                    Ok(())
+                })
+            },
+        )
         .build();
 
     let mut connection = fsm;
@@ -349,10 +395,13 @@ async fn test_complex_state_transitions() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(actions.len(), 1);
     assert!(matches!(actions[0], ConnectionAction::OpenSocket(_)));
-    assert!(matches!(connection.state(), ConnectionState::Connecting { attempt: 1, .. }));
+    assert!(matches!(
+        connection.state(),
+        ConnectionState::Connecting { attempt: 1, .. }
+    ));
 
     // Test: Connection established
     let actions = connection
@@ -364,10 +413,10 @@ async fn test_complex_state_transitions() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(actions.len(), 0);
     assert!(matches!(
-        connection.state(), 
+        connection.state(),
         ConnectionState::Connected { session_id, heartbeat_count: 0 } if session_id == "sess-123"
     ));
 
@@ -394,7 +443,7 @@ async fn test_complex_state_transitions() {
         )
         .await
         .unwrap();
-    
+
     assert_eq!(actions.len(), 2);
     assert!(matches!(
         connection.state(),
@@ -405,7 +454,7 @@ async fn test_complex_state_transitions() {
     let metrics = ctx.metrics.lock().await;
     assert_eq!(metrics.total_connections, 1);
     assert_eq!(metrics.total_heartbeats, 3);
-    
+
     // Check event log
     let mut events = vec![];
     while let Ok(event) = rx.try_recv() {
@@ -418,10 +467,12 @@ async fn test_complex_state_transitions() {
 #[tokio::test]
 async fn test_timeout_handling() {
     use tokio::time::sleep;
-    
+
     let fsm = FsmBuilder::new(ConnectionState::Disconnected { retry_count: 0 })
         .when("Connecting")
-            .timeout(Duration::from_millis(100), |_state: &ConnectionState, _ctx: &mut ConnectionContext| {
+        .timeout(
+            Duration::from_millis(100),
+            |_state: &ConnectionState, _ctx: &mut ConnectionContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: ConnectionState::Failed {
@@ -433,10 +484,13 @@ async fn test_timeout_handling() {
                         )],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .when("Disconnected")
-            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+        .on(
+            "Connect",
+            |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: ConnectionState::Connecting {
@@ -446,8 +500,9 @@ async fn test_timeout_handling() {
                         actions: vec![],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .build();
 
     let mut connection = fsm;
@@ -475,29 +530,40 @@ async fn test_timeout_handling() {
         )
         .await
         .unwrap();
-    
-    assert!(matches!(connection.state(), ConnectionState::Connecting { .. }));
+
+    assert!(matches!(
+        connection.state(),
+        ConnectionState::Connecting { .. }
+    ));
 
     // Wait for timeout
     sleep(Duration::from_millis(150)).await;
-    
+
     // Check timeout should trigger state change
     let actions = connection.check_timeout(&mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(actions[0], ConnectionAction::LogError(_)));
     assert!(matches!(
         connection.state(),
-        ConnectionState::Failed { permanent: false, .. }
+        ConnectionState::Failed {
+            permanent: false,
+            ..
+        }
     ));
 }
 
 #[tokio::test]
 async fn test_invalid_transitions_handled_gracefully() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    
-    let fsm = FsmBuilder::<ConnectionState, ConnectionEvent, ConnectionContext, ConnectionAction>::new(ConnectionState::Disconnected { retry_count: 0 })
+
+    let fsm =
+        FsmBuilder::<ConnectionState, ConnectionEvent, ConnectionContext, ConnectionAction>::new(
+            ConnectionState::Disconnected { retry_count: 0 },
+        )
         .when("Disconnected")
-            .on("Connect", |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+        .on(
+            "Connect",
+            |_state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: ConnectionState::Connecting {
@@ -507,18 +573,23 @@ async fn test_invalid_transitions_handled_gracefully() {
                         actions: vec![],
                     })
                 })
-            })
-            .done()
-        .when_unhandled(|state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
-            let state_name = state.variant_name().to_string();
-            let event_name = event.variant_name().to_string();
-            Box::pin(async move {
-                ctx.event_log.send(
-                    format!("Invalid transition: {} in state {}", event_name, state_name)
-                ).unwrap();
-                Ok(())
-            })
-        })
+            },
+        )
+        .done()
+        .when_unhandled(
+            |state: &ConnectionState, event: &ConnectionEvent, ctx: &mut ConnectionContext| {
+                let state_name = state.variant_name().to_string();
+                let event_name = event.variant_name().to_string();
+                Box::pin(async move {
+                    ctx.event_log
+                        .send(format!(
+                            "Invalid transition: {event_name} in state {state_name}"
+                        ))
+                        .unwrap();
+                    Ok(())
+                })
+            },
+        )
         .build();
 
     let mut connection = fsm;
@@ -541,7 +612,10 @@ async fn test_invalid_transitions_handled_gracefully() {
         .await
         .unwrap();
     assert_eq!(actions.len(), 0); // No actions, just logged
-    assert!(matches!(connection.state(), ConnectionState::Disconnected { .. })); // State unchanged
+    assert!(matches!(
+        connection.state(),
+        ConnectionState::Disconnected { .. }
+    )); // State unchanged
 
     // Check that it was logged
     let event = rx.recv().await.unwrap();
@@ -561,7 +635,7 @@ mod compile_time_safety {
         );
     }
     */
-    
+
     // This should NOT compile - wrong state type in handler
     /*
     #[test]
@@ -586,7 +660,7 @@ mod compile_time_safety {
 #[tokio::test]
 async fn test_concurrent_operations() {
     use std::sync::atomic::{AtomicU32, Ordering};
-    
+
     #[derive(Clone, Debug, PartialEq)]
     enum CounterState {
         Idle,
@@ -642,7 +716,7 @@ async fn test_concurrent_operations() {
     #[async_trait]
     impl FsmAction for CounterAction {
         type Context = CounterContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 CounterAction::Initialize => Ok(()),
@@ -654,7 +728,9 @@ async fn test_concurrent_operations() {
 
     let fsm = FsmBuilder::new(CounterState::Idle)
         .when("Idle")
-            .on("Start", |_state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
+        .on(
+            "Start",
+            |_state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
                 Box::pin(async move {
                     ctx.external_counter.store(0, Ordering::SeqCst);
                     Ok(Transition {
@@ -662,47 +738,54 @@ async fn test_concurrent_operations() {
                         actions: vec![CounterAction::Initialize],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .when("Counting")
-            .on("Increment", |state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
+        .on(
+            "Increment",
+            |state: &CounterState, _event: &CounterEvent, ctx: &mut CounterContext| {
                 let current = match state {
-                    CounterState::Counting { value } => value.clone(),
+                    CounterState::Counting { value } => *value,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     // Simulate some async work
                     tokio::time::sleep(Duration::from_micros(100)).await;
-                    
+
                     let new_value = current + 1;
                     ctx.external_counter.fetch_add(1, Ordering::SeqCst);
-                    
+
                     Ok(Transition {
                         next_state: CounterState::Counting { value: new_value },
                         actions: vec![CounterAction::UpdateValue(new_value)],
                     })
                 })
-            })
-            .on("Finish", |state: &CounterState, _event: &CounterEvent, _ctx: &mut CounterContext| {
+            },
+        )
+        .on(
+            "Finish",
+            |state: &CounterState, _event: &CounterEvent, _ctx: &mut CounterContext| {
                 let final_value = match state {
-                    CounterState::Counting { value } => value.clone(),
+                    CounterState::Counting { value } => *value,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     Ok(Transition {
                         next_state: CounterState::Done { final_value },
                         actions: vec![CounterAction::Finalize],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .build();
 
     let shared_fsm = Arc::new(Mutex::new(fsm));
     let external_counter = Arc::new(AtomicU32::new(0));
-    
+
     // Start counting
     {
         let mut fsm = shared_fsm.lock().await;
@@ -717,7 +800,7 @@ async fn test_concurrent_operations() {
     for _ in 0..10 {
         let fsm_clone = shared_fsm.clone();
         let counter_clone = external_counter.clone();
-        
+
         let handle = tokio::spawn(async move {
             let mut fsm = fsm_clone.lock().await;
             let mut ctx = CounterContext {
@@ -725,7 +808,7 @@ async fn test_concurrent_operations() {
             };
             fsm.handle(CounterEvent::Increment, &mut ctx).await.unwrap();
         });
-        
+
         handles.push(handle);
     }
 
@@ -740,16 +823,16 @@ async fn test_concurrent_operations() {
         let mut ctx = CounterContext {
             external_counter: external_counter.clone(),
         };
-        
+
         let actions = fsm.handle(CounterEvent::Finish, &mut ctx).await.unwrap();
         assert!(matches!(actions[0], CounterAction::Finalize));
-        
+
         // Verify final state
         assert!(matches!(
             fsm.state(),
             CounterState::Done { final_value: 10 }
         ));
-        
+
         // Verify external counter matches
         assert_eq!(external_counter.load(Ordering::SeqCst), 10);
     }
@@ -759,7 +842,7 @@ async fn test_concurrent_operations() {
 #[tokio::test]
 async fn test_entry_exit_handlers() {
     use std::sync::atomic::{AtomicU32, Ordering};
-    
+
     #[derive(Clone, Debug, PartialEq)]
     enum LifecycleState {
         Created,
@@ -818,11 +901,11 @@ async fn test_entry_exit_handlers() {
     #[async_trait]
     impl FsmAction for LifecycleAction {
         type Context = LifecycleContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 LifecycleAction::Log(msg) => {
-                    println!("Log: {}", msg);
+                    println!("Log: {msg}");
                     Ok(())
                 }
                 LifecycleAction::AllocateResources => Ok(()),
@@ -833,86 +916,99 @@ async fn test_entry_exit_handlers() {
 
     let fsm = FsmBuilder::new(LifecycleState::Created)
         .when("Created")
-            .on("Initialize", |_state: &LifecycleState, event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
+        .on(
+            "Initialize",
+            |_state: &LifecycleState, event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
                 let id = match event {
-                    LifecycleEvent::Initialize { id } => id.clone(),
+                    LifecycleEvent::Initialize { id } => *id,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     Ok(Transition {
                         next_state: LifecycleState::Initialized { id },
                         actions: vec![LifecycleAction::AllocateResources],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Initialized")
-            .on("Activate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
+        .on(
+            "Activate",
+            |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: LifecycleState::Active,
                         actions: vec![],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Active")
-            .on("Terminate", |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
+        .on(
+            "Terminate",
+            |_state: &LifecycleState, _event: &LifecycleEvent, _ctx: &mut LifecycleContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: LifecycleState::Terminated,
                         actions: vec![LifecycleAction::ReleaseResources],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         // Entry handlers
-        .on_entry("Initialized", |state: &LifecycleState, ctx: &mut LifecycleContext| {
-            let id = match state {
-                LifecycleState::Initialized { id } => id.clone(),
-                _ => unreachable!(),
-            };
-            Box::pin(async move {
-                ctx.entry_count.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![LifecycleAction::Log(format!(
-                    "Entered Initialized with id={}",
-                    id
-                ))])
-            })
-        })
-        
-        .on_entry("Active", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
-            Box::pin(async move {
-                ctx.entry_count.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![LifecycleAction::Log(
-                    "Entered Active state".to_string(),
-                )])
-            })
-        })
-        
+        .on_entry(
+            "Initialized",
+            |state: &LifecycleState, ctx: &mut LifecycleContext| {
+                let id = match state {
+                    LifecycleState::Initialized { id } => *id,
+                    _ => unreachable!(),
+                };
+                Box::pin(async move {
+                    ctx.entry_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![LifecycleAction::Log(format!(
+                        "Entered Initialized with id={id}"
+                    ))])
+                })
+            },
+        )
+        .on_entry(
+            "Active",
+            |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+                Box::pin(async move {
+                    ctx.entry_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![LifecycleAction::Log(
+                        "Entered Active state".to_string(),
+                    )])
+                })
+            },
+        )
         // Exit handlers
-        .on_exit("Initialized", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
-            Box::pin(async move {
-                ctx.exit_count.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![LifecycleAction::Log(
-                    "Exiting Initialized state".to_string(),
-                )])
-            })
-        })
-        
-        .on_exit("Active", |_state: &LifecycleState, ctx: &mut LifecycleContext| {
-            Box::pin(async move {
-                ctx.exit_count.fetch_add(1, Ordering::SeqCst);
-                Ok(vec![LifecycleAction::Log(
-                    "Exiting Active state".to_string(),
-                )])
-            })
-        })
-        
+        .on_exit(
+            "Initialized",
+            |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+                Box::pin(async move {
+                    ctx.exit_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![LifecycleAction::Log(
+                        "Exiting Initialized state".to_string(),
+                    )])
+                })
+            },
+        )
+        .on_exit(
+            "Active",
+            |_state: &LifecycleState, ctx: &mut LifecycleContext| {
+                Box::pin(async move {
+                    ctx.exit_count.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![LifecycleAction::Log(
+                        "Exiting Active state".to_string(),
+                    )])
+                })
+            },
+        )
         .build();
 
     let mut lifecycle = fsm;
@@ -923,13 +1019,10 @@ async fn test_entry_exit_handlers() {
 
     // Initialize
     let actions = lifecycle
-        .handle(
-            LifecycleEvent::Initialize { id: 42 },
-            &mut ctx,
-        )
+        .handle(LifecycleEvent::Initialize { id: 42 }, &mut ctx)
         .await
         .unwrap();
-    
+
     // Should have: entry action + transition action
     assert_eq!(actions.len(), 2);
     assert!(matches!(actions[0], LifecycleAction::Log(_)));
@@ -941,7 +1034,7 @@ async fn test_entry_exit_handlers() {
         .handle(LifecycleEvent::Activate, &mut ctx)
         .await
         .unwrap();
-    
+
     // Should have: exit handler + entry handler
     assert_eq!(actions.len(), 2);
     assert!(matches!(actions[0], LifecycleAction::Log(ref s) if s.contains("Exiting")));
@@ -954,7 +1047,7 @@ async fn test_entry_exit_handlers() {
         .handle(LifecycleEvent::Terminate, &mut ctx)
         .await
         .unwrap();
-    
+
     // Should have: exit handler + transition action
     assert_eq!(actions.len(), 2);
     assert!(matches!(actions[0], LifecycleAction::Log(ref s) if s.contains("Exiting Active")));
@@ -1016,7 +1109,7 @@ async fn test_error_handling() {
     #[async_trait]
     impl FsmAction for FallibleAction {
         type Context = FallibleContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
@@ -1024,12 +1117,14 @@ async fn test_error_handling() {
 
     let fsm = obzenflow_fsm::internal::FsmBuilder::new(FallibleState::Ready)
         .when("Ready")
-            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
+        .on(
+            "Process",
+            |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 let should_fail = match event {
-                    FallibleEvent::Process { should_fail } => should_fail.clone(),
+                    FallibleEvent::Process { should_fail } => *should_fail,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     if should_fail {
                         Err(obzenflow_fsm::FsmError::HandlerError(
@@ -1042,20 +1137,22 @@ async fn test_error_handling() {
                         })
                     }
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Error")
-            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
+        .on(
+            "Reset",
+            |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: FallibleState::Ready,
                         actions: vec![FallibleAction::Cleanup],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .build();
 
     let mut machine = fsm;
@@ -1063,24 +1160,23 @@ async fn test_error_handling() {
 
     // Test successful processing
     let result = machine
-        .handle(
-            FallibleEvent::Process { should_fail: false },
-            &mut ctx,
-        )
+        .handle(FallibleEvent::Process { should_fail: false }, &mut ctx)
         .await;
-    
+
     assert!(result.is_ok());
     assert!(matches!(machine.state(), FallibleState::Processing));
 
     // Reset FSM by creating a new one for the next test
     let mut machine = FsmBuilder::new(FallibleState::Ready)
         .when("Ready")
-            .on("Process", |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
+        .on(
+            "Process",
+            |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 let should_fail = match event {
-                    FallibleEvent::Process { should_fail } => should_fail.clone(),
+                    FallibleEvent::Process { should_fail } => *should_fail,
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     if should_fail {
                         Err(obzenflow_fsm::FsmError::HandlerError(
@@ -1093,36 +1189,32 @@ async fn test_error_handling() {
                         })
                     }
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .when("Error")
-            .on("Reset", |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
+        .on(
+            "Reset",
+            |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: FallibleState::Ready,
                         actions: vec![FallibleAction::Cleanup],
                     })
                 })
-            })
-            .done()
-        
+            },
+        )
+        .done()
         .build();
 
     // Test failed processing
     let result = machine
-        .handle(
-            FallibleEvent::Process { should_fail: true },
-            &mut ctx,
-        )
+        .handle(FallibleEvent::Process { should_fail: true }, &mut ctx)
         .await;
-    
+
     assert!(result.is_err());
     assert_eq!(
-        result
-            .as_ref()
-            .unwrap_err()
-            .to_string(),
+        result.as_ref().unwrap_err().to_string(),
         "Handler error: Simulated processing error"
     );
     assert!(matches!(machine.state(), FallibleState::Ready)); // State unchanged on error
@@ -1136,16 +1228,20 @@ async fn test_state_persistence() {
         session_id: "existing-session".to_string(),
         heartbeat_count: 42,
     };
-    
+
     let fsm = FsmBuilder::new(initial_state.clone())
         .when("Connected")
-            .on("Heartbeat", |state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
+        .on(
+            "Heartbeat",
+            |state: &ConnectionState, _event: &ConnectionEvent, _ctx: &mut ConnectionContext| {
                 let (session_id, heartbeat_count) = match state {
-                    ConnectionState::Connected { session_id, heartbeat_count } => 
-                        (session_id.clone(), *heartbeat_count),
+                    ConnectionState::Connected {
+                        session_id,
+                        heartbeat_count,
+                    } => (session_id.clone(), *heartbeat_count),
                     _ => unreachable!(),
                 };
-                
+
                 Box::pin(async move {
                     Ok(Transition {
                         next_state: ConnectionState::Connected {
@@ -1155,8 +1251,9 @@ async fn test_state_persistence() {
                         actions: vec![ConnectionAction::IncrementHeartbeat],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .build();
 
     let mut restored_fsm = fsm;
@@ -1188,6 +1285,9 @@ async fn test_state_persistence() {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         restored_fsm.state(),
-        ConnectionState::Connected { heartbeat_count: 43, .. }
+        ConnectionState::Connected {
+            heartbeat_count: 43,
+            ..
+        }
     ));
 }

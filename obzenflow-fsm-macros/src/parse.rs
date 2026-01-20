@@ -272,5 +272,4 @@ mod tests {
         let tokens: TokenStream = syn::parse_str(src).expect("tokenize");
         let _spec = FsmSpec::parse(tokens).expect("parse FsmSpec");
     }
-
 }

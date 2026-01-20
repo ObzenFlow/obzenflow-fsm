@@ -1,8 +1,10 @@
 //! Test to ensure StateMachine can only be created through the builder
 //! This test will fail to compile if StateMachine::new becomes public
 
+#![allow(deprecated)]
+
 use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 
 #[derive(Clone, Debug, PartialEq)]
 enum TestState {
@@ -60,23 +62,26 @@ fn test_builder_is_only_way_to_create_state_machine() {
     // This should compile - using the builder
     let _fsm = FsmBuilder::<TestState, TestEvent, TestContext, TestAction>::new(TestState::Initial)
         .when("Initial")
-        .on("Go", |_state, _event: &TestEvent, _ctx: &mut TestContext| {
-            Box::pin(async {
-                Ok(Transition {
-                    next_state: TestState::Final,
-                    actions: vec![],
+        .on(
+            "Go",
+            |_state, _event: &TestEvent, _ctx: &mut TestContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: TestState::Final,
+                        actions: vec![],
+                    })
                 })
-            })
-        })
+            },
+        )
         .done()
         .build();
 
     // The following should NOT compile if we've done our job correctly
     // Uncommenting these lines should result in a compilation error
-    
+
     /*
     use std::collections::HashMap;
-    
+
     // This should fail with "function `new` is private" or similar
     let _direct_fsm = obzenflow_fsm::StateMachine::new(
         TestState::Initial,
@@ -93,11 +98,11 @@ fn test_builder_is_only_way_to_create_state_machine() {
 fn test_cannot_import_new_method() {
     // This test verifies we cannot use StateMachine::new even with imports
     // The following should not compile:
-    
+
     /*
     use obzenflow_fsm::StateMachine;
     use std::collections::HashMap;
-    
+
     let _fsm = StateMachine::<TestState, TestEvent, TestContext, TestAction>::new(
         TestState::Initial,
         HashMap::new(),
@@ -123,5 +128,9 @@ fn test_builder_only_construction_documentation() {
     //
     // This ensures users must use FsmBuilder to create state machines,
     // which enforces proper FSM construction with all transitions defined.
-    assert!(true, "StateMachine can only be created via FsmBuilder");
+    let event = TestEvent::Go;
+    assert_eq!(event.variant_name(), "Go");
+
+    let action = TestAction::DoSomething;
+    let _ = action.describe();
 }

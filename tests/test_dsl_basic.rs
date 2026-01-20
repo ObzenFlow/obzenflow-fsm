@@ -1,4 +1,6 @@
-use obzenflow_fsm::{fsm, EventVariant, FsmAction, FsmContext, StateMachine, StateVariant, Transition};
+use obzenflow_fsm::{
+    fsm, EventVariant, FsmAction, FsmContext, StateMachine, StateVariant, Transition,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 enum SimpleState {

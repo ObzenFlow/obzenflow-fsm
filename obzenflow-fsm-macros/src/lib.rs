@@ -109,5 +109,5 @@ pub fn fsm(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-mod parse;
 mod codegen;
+mod parse;

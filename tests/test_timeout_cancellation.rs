@@ -18,13 +18,16 @@
 //! - Tests if our FSM honors the sacred AT LEAST ONCE covenant
 //! - "Beg for meat, get meat, no more hungry" - but NEVER drop the meat
 
-use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+#![allow(dead_code)]
+#![allow(deprecated)]
+
 use async_trait::async_trait;
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -60,8 +63,8 @@ async fn test_5_timeout_cancellation_inferno() {
         MaterializationProgress(String),   // More data arriving
         ProcessBatch,
         TimeoutDetected,
-        EmitKoolAid,      // Signal downstream: we're dying
-        DrinkKoolAid,     // Actually die
+        EmitKoolAid,  // Signal downstream: we're dying
+        DrinkKoolAid, // Actually die
     }
 
     impl EventVariant for PurgatoryEvent {
@@ -81,8 +84,8 @@ async fn test_5_timeout_cancellation_inferno() {
     enum PurgatoryAction {
         BufferData(String),
         ProcessData(String),
-        PoisonDownstream,   // Send kool-aid to all subscribers
-        CommitSuicide,      // FSM terminates itself
+        PoisonDownstream,           // Send kool-aid to all subscribers
+        CommitSuicide,              // FSM terminates itself
         PanicWithData(Vec<String>), // Last resort: panic with uncommitted data
     }
 
@@ -102,7 +105,10 @@ async fn test_5_timeout_cancellation_inferno() {
 
     impl FsmContext for PurgatoryContext {
         fn describe(&self) -> String {
-            format!("PurgatoryContext with {} timeouts", self.timeout_count.load(Ordering::Relaxed))
+            format!(
+                "PurgatoryContext with {} timeouts",
+                self.timeout_count.load(Ordering::Relaxed)
+            )
         }
     }
 
@@ -116,7 +122,7 @@ async fn test_5_timeout_cancellation_inferno() {
                     ctx.all_data_seen.write().await.push(data.clone());
                     Ok(())
                 }
-                PurgatoryAction::ProcessData(data) => {
+                PurgatoryAction::ProcessData(_data) => {
                     // Process data
                     Ok(())
                 }
@@ -128,7 +134,7 @@ async fn test_5_timeout_cancellation_inferno() {
                     // FSM terminates itself
                     Ok(())
                 }
-                PurgatoryAction::PanicWithData(data) => {
+                PurgatoryAction::PanicWithData(_data) => {
                     // Last resort
                     Ok(())
                 }
@@ -151,48 +157,55 @@ async fn test_5_timeout_cancellation_inferno() {
     let (tx, mut rx) = mpsc::channel(100);
     ctx.downstream.write().await.push(tx);
 
-    let mut machine1 = obzenflow_fsm::internal::FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
-        data_buffer: vec![],
-        in_flight: 0,
-    })
+    let mut machine1 =
+        FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(
+            PurgatoryState::Materializing {
+                data_buffer: vec![],
+                in_flight: 0,
+            },
+        )
         .when("Materializing")
-            .timeout(
-                Duration::from_millis(10),
-                |state, ctx: &mut PurgatoryContext| {
-                    let state = state.clone();
-                    Box::pin(async move {
-                        ctx.timeout_count.fetch_add(1, Ordering::SeqCst);
+        .timeout(
+            Duration::from_millis(10),
+            |state, ctx: &mut PurgatoryContext| {
+                let state = state.clone();
+                Box::pin(async move {
+                    ctx.timeout_count.fetch_add(1, Ordering::SeqCst);
 
-                        if let PurgatoryState::Materializing { data_buffer, in_flight } = &state {
-                    if !data_buffer.is_empty() || *in_flight > 0 {
-                                println!(
-                                    "⚠️ TIMEOUT WITH {} BUFFERED, {} IN FLIGHT - INITIATING JONESTOWN",
-                                    data_buffer.len(),
-                                    in_flight
-                                );
+                    if let PurgatoryState::Materializing {
+                        data_buffer,
+                        in_flight,
+                    } = &state
+                    {
+                        if !data_buffer.is_empty() || *in_flight > 0 {
+                            println!(
+                                "⚠️ TIMEOUT WITH {} BUFFERED, {} IN FLIGHT - INITIATING JONESTOWN",
+                                data_buffer.len(),
+                                in_flight
+                            );
 
-                                Ok(Transition {
-                                    next_state: PurgatoryState::DrinkingKoolAid(
-                                        format!(
-                                            "Timeout with {} uncommitted messages",
-                                            data_buffer.len() + *in_flight
-                                        ),
-                                    ),
-                                    actions: vec![PurgatoryAction::PoisonDownstream],
-                                })
-                            } else {
-                                Ok(Transition {
-                                    next_state: PurgatoryState::Dead,
-                                    actions: vec![],
-                                })
-                            }
+                            Ok(Transition {
+                                next_state: PurgatoryState::DrinkingKoolAid(format!(
+                                    "Timeout with {} uncommitted messages",
+                                    data_buffer.len() + *in_flight
+                                )),
+                                actions: vec![PurgatoryAction::PoisonDownstream],
+                            })
                         } else {
-                            unreachable!()
+                            Ok(Transition {
+                                next_state: PurgatoryState::Dead,
+                                actions: vec![],
+                            })
                         }
-                    })
-                },
-            )
-            .on("StartMaterialization", |state, event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
+                    } else {
+                        unreachable!()
+                    }
+                })
+            },
+        )
+        .on(
+            "StartMaterialization",
+            |_state, event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
                 let event = event.clone();
                 Box::pin(async move {
                     if let PurgatoryEvent::StartMaterialization(data) = event {
@@ -206,17 +219,17 @@ async fn test_5_timeout_cancellation_inferno() {
                                 data_buffer: data.clone(),
                                 in_flight: data.len(),
                             },
-                            actions: data
-                                .into_iter()
-                                .map(PurgatoryAction::BufferData)
-                                .collect(),
+                            actions: data.into_iter().map(PurgatoryAction::BufferData).collect(),
                         })
                     } else {
                         unreachable!()
                     }
                 })
-            })
-            .on("ProcessBatch", |state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
+            },
+        )
+        .on(
+            "ProcessBatch",
+            |state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
                 let state = state.clone();
                 Box::pin(async move {
                     if let PurgatoryState::Materializing { data_buffer, .. } = state {
@@ -230,7 +243,7 @@ async fn test_5_timeout_cancellation_inferno() {
                                 if tx.send(data.clone()).await.is_err() {
                                     return Ok(Transition {
                                         next_state: PurgatoryState::DrinkingKoolAid(
-                                            "Downstream channel broken".to_string()
+                                            "Downstream channel broken".to_string(),
                                         ),
                                         actions: vec![PurgatoryAction::PoisonDownstream],
                                     });
@@ -250,18 +263,22 @@ async fn test_5_timeout_cancellation_inferno() {
                         unreachable!()
                     }
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .when("Processing")
-            .timeout(Duration::from_millis(50), |_state, _ctx: &mut PurgatoryContext| {
+        .timeout(
+            Duration::from_millis(50),
+            |_state, _ctx: &mut PurgatoryContext| {
                 Box::pin(async {
                     Ok(Transition {
                         next_state: PurgatoryState::Dead,
                         actions: vec![],
                     })
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .build();
 
     // Start with data that MUST be delivered
@@ -285,13 +302,15 @@ async fn test_5_timeout_cancellation_inferno() {
 
     // Verify all data was processed
     let mut received_count = 0;
-    while let Ok(_) = rx.try_recv() {
+    while rx.try_recv().is_ok() {
         received_count += 1;
     }
-    println!("✅ Received {} messages before timeout", received_count);
+    println!("✅ Received {received_count} messages before timeout");
 
-    assert!(matches!(machine1.state(), PurgatoryState::Processing { .. }),
-        "Should have escaped purgatory!");
+    assert!(
+        matches!(machine1.state(), PurgatoryState::Processing { .. }),
+        "Should have escaped purgatory!"
+    );
 
     println!("\n😈 Trial 2: The Condemned (50ms operations with 10ms timeout)");
     let mut ctx2 = PurgatoryContext {
@@ -305,73 +324,80 @@ async fn test_5_timeout_cancellation_inferno() {
     let (tx2, _rx2) = mpsc::channel(100);
     ctx2.downstream.write().await.push(tx2);
 
-    let mut machine2 = obzenflow_fsm::internal::FsmBuilder::new(PurgatoryState::Materializing {
+    let mut machine2 = FsmBuilder::new(PurgatoryState::Materializing {
         data_buffer: vec![],
         in_flight: 0,
     })
-        .when("Materializing")
-            .timeout(
-                Duration::from_millis(10),
-                |state, ctx: &mut PurgatoryContext| {
-                    let state = state.clone();
-                    Box::pin(async move {
-                        if let PurgatoryState::Materializing { data_buffer, in_flight } = &state {
+    .when("Materializing")
+    .timeout(
+        Duration::from_millis(10),
+        |state, _ctx: &mut PurgatoryContext| {
+            let state = state.clone();
+            Box::pin(async move {
+                if let PurgatoryState::Materializing {
+                    data_buffer,
+                    in_flight,
+                } = &state
+                {
                     if !data_buffer.is_empty() || *in_flight > 0 {
-                                // JONESTOWN PROTOCOL!
-                                Ok(Transition {
-                                    next_state: PurgatoryState::DrinkingKoolAid(
-                                        format!(
-                                            "Timeout with {} messages at risk",
-                                            data_buffer.len() + *in_flight
-                                        ),
-                                    ),
-                                    actions: vec![PurgatoryAction::PoisonDownstream],
-                                })
-                            } else {
-                                Ok(Transition {
-                                    next_state: PurgatoryState::Dead,
-                                    actions: vec![],
-                                })
-                            }
-                        } else {
-                            unreachable!()
-                        }
-                    })
-                },
-            )
-            .on("StartMaterialization", |_state, event: &PurgatoryEvent, _ctx: &mut PurgatoryContext| {
-                let event = event.clone();
-                Box::pin(async move {
-                    if let PurgatoryEvent::StartMaterialization(data) = event {
-                        // This will timeout!
-                        sleep(Duration::from_millis(50)).await;
-
+                        // JONESTOWN PROTOCOL!
                         Ok(Transition {
-                            next_state: PurgatoryState::Materializing {
-                                data_buffer: data.clone(),
-                                in_flight: data.len(),
-                            },
-                            actions: vec![],
+                            next_state: PurgatoryState::DrinkingKoolAid(format!(
+                                "Timeout with {} messages at risk",
+                                data_buffer.len() + *in_flight
+                            )),
+                            actions: vec![PurgatoryAction::PoisonDownstream],
                         })
                     } else {
-                        unreachable!()
+                        Ok(Transition {
+                            next_state: PurgatoryState::Dead,
+                            actions: vec![],
+                        })
                     }
-                })
+                } else {
+                    unreachable!()
+                }
             })
-            .done()
-        .when("DrinkingKoolAid")
-            .on("DrinkKoolAid", |state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
-                let state = state.clone();
-                Box::pin(async move {
-                    ctx.kool_aid_emitted.store(true, Ordering::SeqCst);
+        },
+    )
+    .on(
+        "StartMaterialization",
+        |_state, event: &PurgatoryEvent, _ctx: &mut PurgatoryContext| {
+            let event = event.clone();
+            Box::pin(async move {
+                if let PurgatoryEvent::StartMaterialization(data) = event {
+                    // This will timeout!
+                    sleep(Duration::from_millis(50)).await;
+
                     Ok(Transition {
-                        next_state: PurgatoryState::Dead,
-                        actions: vec![PurgatoryAction::CommitSuicide],
+                        next_state: PurgatoryState::Materializing {
+                            data_buffer: data.clone(),
+                            in_flight: data.len(),
+                        },
+                        actions: vec![],
                     })
+                } else {
+                    unreachable!()
+                }
+            })
+        },
+    )
+    .done()
+    .when("DrinkingKoolAid")
+    .on(
+        "DrinkKoolAid",
+        |_state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
+            Box::pin(async move {
+                ctx.kool_aid_emitted.store(true, Ordering::SeqCst);
+                Ok(Transition {
+                    next_state: PurgatoryState::Dead,
+                    actions: vec![PurgatoryAction::CommitSuicide],
                 })
             })
-            .done()
-        .build();
+        },
+    )
+    .done()
+    .build();
 
     // Start operation that will timeout
     let doomed_data = vec!["critical1".to_string(), "critical2".to_string()];
@@ -389,8 +415,10 @@ async fn test_5_timeout_cancellation_inferno() {
     // Check timeout
     machine2.check_timeout(&mut ctx2).await.unwrap();
 
-    assert!(matches!(machine2.state(), PurgatoryState::DrinkingKoolAid(_)),
-        "Should be drinking kool-aid after timeout with data!");
+    assert!(
+        matches!(machine2.state(), PurgatoryState::DrinkingKoolAid(_)),
+        "Should be drinking kool-aid after timeout with data!"
+    );
 
     // Complete the Jonestown protocol
     machine2
@@ -398,10 +426,14 @@ async fn test_5_timeout_cancellation_inferno() {
         .await
         .unwrap();
 
-    assert!(ctx2.kool_aid_emitted.load(Ordering::SeqCst),
-        "Kool-aid should have been emitted!");
-    assert!(matches!(machine2.state(), PurgatoryState::Dead),
-        "FSM should be dead after drinking kool-aid!");
+    assert!(
+        ctx2.kool_aid_emitted.load(Ordering::SeqCst),
+        "Kool-aid should have been emitted!"
+    );
+    assert!(
+        matches!(machine2.state(), PurgatoryState::Dead),
+        "FSM should be dead after drinking kool-aid!"
+    );
 
     println!("\n😈 Trial 3: The Downstream Death Cascade");
     // Test what happens when downstream is already dead
@@ -418,12 +450,17 @@ async fn test_5_timeout_cancellation_inferno() {
     drop(rx3); // Kill the receiver!
     ctx3.downstream.write().await.push(tx3);
 
-    let mut machine3 = obzenflow_fsm::internal::FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(PurgatoryState::Materializing {
-        data_buffer: vec![],
-        in_flight: 0,
-    })
+    let mut machine3 =
+        FsmBuilder::<PurgatoryState, PurgatoryEvent, PurgatoryContext, PurgatoryAction>::new(
+            PurgatoryState::Materializing {
+                data_buffer: vec![],
+                in_flight: 0,
+            },
+        )
         .when("Materializing")
-            .on("StartMaterialization", |state, event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
+        .on(
+            "StartMaterialization",
+            |_state, event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
                 let event = event.clone();
                 Box::pin(async move {
                     if let PurgatoryEvent::StartMaterialization(data) = event {
@@ -439,8 +476,11 @@ async fn test_5_timeout_cancellation_inferno() {
                         unreachable!()
                     }
                 })
-            })
-            .on("ProcessBatch", |state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
+            },
+        )
+        .on(
+            "ProcessBatch",
+            |state, _event: &PurgatoryEvent, ctx: &mut PurgatoryContext| {
                 let state = state.clone();
                 Box::pin(async move {
                     if let PurgatoryState::Materializing { data_buffer, .. } = state {
@@ -451,7 +491,7 @@ async fn test_5_timeout_cancellation_inferno() {
                                 if tx.send(data.clone()).await.is_err() {
                                     return Ok(Transition {
                                         next_state: PurgatoryState::DrinkingKoolAid(
-                                            "Downstream channel broken".to_string()
+                                            "Downstream channel broken".to_string(),
                                         ),
                                         actions: vec![PurgatoryAction::PoisonDownstream],
                                     });
@@ -470,10 +510,11 @@ async fn test_5_timeout_cancellation_inferno() {
                         unreachable!()
                     }
                 })
-            })
-            .done()
+            },
+        )
+        .done()
         .when("DrinkingKoolAid")
-            .done()
+        .done()
         .build();
     machine3
         .handle(
@@ -489,8 +530,10 @@ async fn test_5_timeout_cancellation_inferno() {
         .await
         .unwrap();
 
-    assert!(matches!(machine3.state(), PurgatoryState::DrinkingKoolAid(_)),
-        "Should initiate Jonestown when downstream is dead!");
+    assert!(
+        matches!(machine3.state(), PurgatoryState::DrinkingKoolAid(_)),
+        "Should initiate Jonestown when downstream is dead!"
+    );
 
     println!("\n🔥 Purgatory trials complete!");
     println!("✝️ The Jonestown Protocol preserved AT LEAST ONCE even under timeout pressure!");

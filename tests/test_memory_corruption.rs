@@ -24,15 +24,17 @@
 //! - Proves Rust's ownership is divinely inspired
 //! - The 666th line should be in this test (if we reach it)
 
-use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+#![allow(dead_code)]
+#![allow(deprecated)]
+
 use async_trait::async_trait;
-use std::sync::Arc;
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::sync::Weak;
-use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -110,7 +112,11 @@ async fn test_6_memory_corruption_gauntlet() {
 
     impl FsmContext for CorruptionContext {
         fn describe(&self) -> String {
-            format!("CorruptionContext#{} with {} bytes allocated", self.id, self.allocated_memory.load(Ordering::Relaxed))
+            format!(
+                "CorruptionContext#{} with {} bytes allocated",
+                self.id,
+                self.allocated_memory.load(Ordering::Relaxed)
+            )
         }
     }
 
@@ -199,9 +205,21 @@ async fn test_6_memory_corruption_gauntlet() {
 
     {
         // Create a cycle of contexts
-        let ctx1 = Arc::new(CorruptionContext::new(1, creation_count.clone(), drop_count.clone()));
-        let ctx2 = Arc::new(CorruptionContext::new(2, creation_count.clone(), drop_count.clone()));
-        let ctx3 = Arc::new(CorruptionContext::new(3, creation_count.clone(), drop_count.clone()));
+        let ctx1 = Arc::new(CorruptionContext::new(
+            1,
+            creation_count.clone(),
+            drop_count.clone(),
+        ));
+        let ctx2 = Arc::new(CorruptionContext::new(
+            2,
+            creation_count.clone(),
+            drop_count.clone(),
+        ));
+        let ctx3 = Arc::new(CorruptionContext::new(
+            3,
+            creation_count.clone(),
+            drop_count.clone(),
+        ));
 
         // Create the cycle: 1 -> 2 -> 3 -> 1
         ctx1.clone().create_cycle(ctx2.clone()).await;
@@ -226,8 +244,11 @@ async fn test_6_memory_corruption_gauntlet() {
 
     let created = creation_count.load(Ordering::SeqCst);
     let dropped = drop_count.load(Ordering::SeqCst);
-    println!("✅ Created: {}, Dropped: {} (should be equal)", created, dropped);
-    assert_eq!(created, dropped, "Memory leak detected! Contexts not dropped!");
+    println!("✅ Created: {created}, Dropped: {dropped} (should be equal)");
+    assert_eq!(
+        created, dropped,
+        "Memory leak detected! Contexts not dropped!"
+    );
 
     // === TRIAL 2: The Abandoned Async Tasks ===
     println!("\n😈 Trial 2: Abandoned Async Tasks");
@@ -239,7 +260,7 @@ async fn test_6_memory_corruption_gauntlet() {
         let ctx = Arc::new(CorruptionContext::new(
             666, // The beast's context
             Arc::new(AtomicUsize::new(0)),
-            Arc::new(AtomicUsize::new(0))
+            Arc::new(AtomicUsize::new(0)),
         ));
 
         // Spawn tasks that hold Arc references
@@ -274,7 +295,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
     let created_tasks = task_creation_count.load(Ordering::SeqCst);
     let completed_tasks = task_completion_count.load(Ordering::SeqCst);
-    println!("✅ Tasks created: {}, completed: {}", created_tasks, completed_tasks);
+    println!("✅ Tasks created: {created_tasks}, completed: {completed_tasks}");
     // Some tasks may not complete due to being dropped, but that's fine
 
     // === TRIAL 3: The FSM Apocalypse (Mass Spawn/Kill) ===
@@ -286,7 +307,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Measure baseline memory
     let baseline_memory = get_approximate_memory();
-    println!("📊 Baseline memory: ~{} bytes", baseline_memory);
+    println!("📊 Baseline memory: ~{baseline_memory} bytes");
 
     // Spawn 1000 FSMs
     for i in 0..1000 {
@@ -300,7 +321,7 @@ async fn test_6_memory_corruption_gauntlet() {
             let mut ctx = CorruptionContext::new(
                 i,
                 Arc::new(AtomicUsize::new(0)),
-                Arc::new(AtomicUsize::new(0))
+                Arc::new(AtomicUsize::new(0)),
             );
 
             // Allocate some memory
@@ -308,25 +329,31 @@ async fn test_6_memory_corruption_gauntlet() {
             let _memory: Vec<u8> = vec![0; 1024 * 1024];
 
             // Build FSM
-            let mut fsm = obzenflow_fsm::internal::FsmBuilder::<CorruptionState, CorruptionEvent, CorruptionContext, CorruptionAction>::new(
-                CorruptionState::Spawning { id: i }
-            )
-                .when("Spawning")
-                    .on("Die", |state, _event: &CorruptionEvent, _ctx: &mut CorruptionContext| {
-                        let state = state.clone();
-                        Box::pin(async move {
-                            if let CorruptionState::Spawning { id: _ } = state {
-                                Ok(Transition {
-                                    next_state: CorruptionState::Dead,
-                                    actions: vec![CorruptionAction::Cleanup],
-                                })
-                            } else {
-                                unreachable!()
-                            }
-                        })
+            let mut fsm = FsmBuilder::<
+                CorruptionState,
+                CorruptionEvent,
+                CorruptionContext,
+                CorruptionAction,
+            >::new(CorruptionState::Spawning { id: i })
+            .when("Spawning")
+            .on(
+                "Die",
+                |state, _event: &CorruptionEvent, _ctx: &mut CorruptionContext| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        if let CorruptionState::Spawning { id: _ } = state {
+                            Ok(Transition {
+                                next_state: CorruptionState::Dead,
+                                actions: vec![CorruptionAction::Cleanup],
+                            })
+                        } else {
+                            unreachable!()
+                        }
                     })
-                    .done()
-                .build();
+                },
+            )
+            .done()
+            .build();
 
             // Random lifetime
             sleep(Duration::from_millis(rand::random::<u64>() % 100)).await;
@@ -354,17 +381,21 @@ async fn test_6_memory_corruption_gauntlet() {
 
     let spawned = fsm_count.load(Ordering::SeqCst);
     let died = death_count.load(Ordering::SeqCst);
-    println!("✅ FSMs spawned: {}, died: {} (some aborted)", spawned, died);
+    println!("✅ FSMs spawned: {spawned}, died: {died} (some aborted)");
 
     // Check memory returned to baseline (approximately)
     sleep(Duration::from_millis(100)).await; // Let things settle
     let final_memory = get_approximate_memory();
-    println!("📊 Final memory: ~{} bytes", final_memory);
+    println!("📊 Final memory: ~{final_memory} bytes");
 
     // Memory should not grow unbounded
     let memory_growth = final_memory.saturating_sub(baseline_memory);
-    println!("📈 Memory growth: {} bytes", memory_growth);
-    assert!(memory_growth < 100 * 1024 * 1024, "Memory leak detected! Growth: {} MB", memory_growth / 1024 / 1024);
+    println!("📈 Memory growth: {memory_growth} bytes");
+    assert!(
+        memory_growth < 100 * 1024 * 1024,
+        "Memory leak detected! Growth: {} MB",
+        memory_growth / 1024 / 1024
+    );
 
     // === TRIAL 4: The Self-Referential Nightmare ===
     println!("\n😈 Trial 4: Self-Referential Nightmare");
@@ -372,7 +403,7 @@ async fn test_6_memory_corruption_gauntlet() {
     let nightmare_ctx = Arc::new(CorruptionContext::new(
         999,
         Arc::new(AtomicUsize::new(0)),
-        Arc::new(AtomicUsize::new(0))
+        Arc::new(AtomicUsize::new(0)),
     ));
 
     // Create self-reference through channel
@@ -385,7 +416,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Verify self-references exist
     let initial_strong_count = Arc::strong_count(&nightmare_ctx);
-    println!("🔄 Self-references created, strong count: {}", initial_strong_count);
+    println!("🔄 Self-references created, strong count: {initial_strong_count}");
     assert!(initial_strong_count > 1, "Self-references not created!");
 
     // Break self-references
@@ -393,7 +424,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Verify cleanup
     let final_strong_count = Arc::strong_count(&nightmare_ctx);
-    println!("✅ Self-references broken, strong count: {}", final_strong_count);
+    println!("✅ Self-references broken, strong count: {final_strong_count}");
     assert_eq!(final_strong_count, 1, "Self-references not cleaned up!");
 
     println!("\n🏆 THE INCORRUPTIBLE Arc<Context> HAS DEFEATED SATAN!");

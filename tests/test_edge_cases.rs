@@ -1,9 +1,12 @@
 //! Edge case tests for the FSM implementation
-//! 
+//!
 //! These tests push the FSM to its limits with extreme scenarios
 
+#![allow(dead_code)]
+#![allow(deprecated)]
+
 use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -80,7 +83,10 @@ async fn test_deeply_nested_state() {
         map
     };
 
-    let fsm = obzenflow_fsm::internal::FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 { data: initial_data })
+    let fsm =
+        FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 {
+            data: initial_data,
+        })
         .when("Level1")
         .on("Transform", |state, _event, _ctx: &mut EmptyContext| {
             let data = match state {
@@ -92,12 +98,10 @@ async fn test_deeply_nested_state() {
                 // Transform nested data into matrix
                 let mut matrix = vec![];
                 for (_key, values) in data {
-                    for opt in values {
-                        if let Some(inner) = opt {
-                            // Convert f64 values to u32
-                            let u32_values: Vec<u32> = inner.values.iter().map(|&v| v as u32).collect();
-                            matrix.push(vec![u32_values]);
-                        }
+                    for inner in values.into_iter().flatten() {
+                        // Convert f64 values to u32
+                        let u32_values: Vec<u32> = inner.values.iter().map(|&v| v as u32).collect();
+                        matrix.push(vec![u32_values]);
                     }
                 }
 
@@ -130,13 +134,13 @@ async fn test_deeply_nested_state() {
         .handle(NestedEvent::Transform, &mut ctx)
         .await
         .unwrap();
-    
+
     // Verify transformation
     if let NestedState::Level2 { matrix } = machine.state() {
         assert_eq!(matrix.len(), 1);
         assert_eq!(matrix[0].len(), 1);
         assert_eq!(matrix[0][0], vec![1, 2, 3]); // Now u32 values
-        
+
         // Mutate doesn't apply to Level2 anymore since we removed metadata
         machine
             .handle(
@@ -186,19 +190,19 @@ async fn test_zero_sized_types() {
     struct ZstAction;
 
     struct ZstContext;
-    
+
     impl FsmContext for ZstContext {}
-    
+
     #[async_trait::async_trait]
     impl FsmAction for ZstAction {
         type Context = ZstContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(ZstState::Empty)
+    let fsm = FsmBuilder::new(ZstState::Empty)
         .when("Empty")
         .on("ZstEvent", |_state, _event, _ctx: &mut ZstContext| {
             Box::pin(async {
@@ -236,9 +240,9 @@ async fn test_zero_sized_types() {
 /// Test maximum handler complexity
 #[tokio::test]
 async fn test_complex_async_handlers() {
-    use tokio::time::{sleep, timeout};
     use std::time::Duration;
-    
+    use tokio::time::{sleep, timeout};
+
     #[derive(Clone, Debug, PartialEq)]
     enum AsyncState {
         Idle,
@@ -290,32 +294,41 @@ async fn test_complex_async_handlers() {
         start_time: std::time::Instant,
         external_service: Arc<RwLock<Vec<String>>>,
     }
-    
+
     impl FsmContext for AsyncContext {}
-    
+
     #[async_trait::async_trait]
     impl FsmAction for AsyncAction {
         type Context = AsyncContext;
-        
+
         async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 AsyncAction::SpawnTasks(count) => {
-                    ctx.external_service.write().await.push(format!("Spawning {} tasks", count));
+                    ctx.external_service
+                        .write()
+                        .await
+                        .push(format!("Spawning {count} tasks"));
                     Ok(())
                 }
                 AsyncAction::UpdateProgress(progress) => {
-                    ctx.external_service.write().await.push(format!("Progress: {}%", progress));
+                    ctx.external_service
+                        .write()
+                        .await
+                        .push(format!("Progress: {progress}%"));
                     Ok(())
                 }
                 AsyncAction::GenerateReport(report) => {
-                    ctx.external_service.write().await.push(format!("Report: {}", report));
+                    ctx.external_service
+                        .write()
+                        .await
+                        .push(format!("Report: {report}"));
                     Ok(())
                 }
             }
         }
     }
 
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(AsyncState::Idle)
+    let fsm = FsmBuilder::new(AsyncState::Idle)
         .when("Idle")
         .on("StartWork", |_state, event, ctx: &mut AsyncContext| {
             let task_count = match event {
@@ -332,10 +345,7 @@ async fn test_complex_async_handlers() {
                         let service = external_service.clone();
                         tokio::spawn(async move {
                             sleep(Duration::from_millis(10)).await;
-                            service
-                                .write()
-                                .await
-                                .push(format!("Task {} initialized", i));
+                            service.write().await.push(format!("Task {i} initialized"));
                         })
                     })
                     .collect();
@@ -349,7 +359,7 @@ async fn test_complex_async_handlers() {
 
                 // Perform some CPU-bound work
                 let parallel_tasks: Vec<String> =
-                    (0..task_count).map(|i| format!("Task-{}", i)).collect();
+                    (0..task_count).map(|i| format!("Task-{i}")).collect();
 
                 Ok(Transition {
                     next_state: AsyncState::Working {
@@ -391,7 +401,7 @@ async fn test_complex_async_handlers() {
                         external_service
                             .write()
                             .await
-                            .push(format!("Processed: {}", task));
+                            .push(format!("Processed: {task}"));
                     }
 
                     batch.len() as u32
@@ -425,7 +435,9 @@ async fn test_complex_async_handlers() {
         })
         .on("FinishWork", |state, _event, ctx: &mut AsyncContext| {
             let tasks_completed: u32 = match state {
-                AsyncState::Working { tasks_completed, .. } => *tasks_completed,
+                AsyncState::Working {
+                    tasks_completed, ..
+                } => *tasks_completed,
                 AsyncState::Completed { total_tasks, .. } => *total_tasks,
                 _ => 0,
             };
@@ -434,10 +446,7 @@ async fn test_complex_async_handlers() {
 
             Box::pin(async move {
                 // Generate final report
-                let report = format!(
-                    "Completed {} tasks in {}ms",
-                    tasks_completed, duration_ms
-                );
+                let report = format!("Completed {tasks_completed} tasks in {duration_ms}ms");
 
                 Ok(Transition {
                     next_state: AsyncState::Completed {
@@ -459,20 +468,14 @@ async fn test_complex_async_handlers() {
 
     // Start work
     machine
-        .handle(
-            AsyncEvent::StartWork { task_count: 10 },
-            &mut ctx,
-        )
+        .handle(AsyncEvent::StartWork { task_count: 10 }, &mut ctx)
         .await
         .unwrap();
 
     // Process in batches
     for _ in 0..3 {
         let actions = machine
-            .handle(
-                AsyncEvent::ProcessBatch { batch_size: 3 },
-                &mut ctx,
-            )
+            .handle(AsyncEvent::ProcessBatch { batch_size: 3 }, &mut ctx)
             .await
             .unwrap();
 
@@ -495,8 +498,6 @@ async fn test_complex_async_handlers() {
 /// Test state equality with complex data
 #[tokio::test]
 async fn test_state_equality_edge_cases() {
-    use std::f64::NAN;
-    
     #[derive(Clone, Debug)]
     enum FloatState {
         WithNan { value: f64 },
@@ -511,7 +512,10 @@ async fn test_state_equality_edge_cases() {
                 (FloatState::WithNan { value: v1 }, FloatState::WithNan { value: v2 }) => {
                     v1.is_nan() && v2.is_nan() || v1 == v2
                 }
-                (FloatState::WithInfinity { value: v1 }, FloatState::WithInfinity { value: v2 }) => v1 == v2,
+                (
+                    FloatState::WithInfinity { value: v1 },
+                    FloatState::WithInfinity { value: v2 },
+                ) => v1 == v2,
                 (FloatState::Normal { value: v1 }, FloatState::Normal { value: v2 }) => v1 == v2,
                 _ => false,
             }
@@ -549,24 +553,24 @@ async fn test_state_equality_edge_cases() {
     struct FloatAction;
 
     struct FloatContext;
-    
+
     impl FsmContext for FloatContext {}
-    
+
     #[async_trait::async_trait]
     impl FsmAction for FloatAction {
         type Context = FloatContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(FloatState::Normal { value: 1.0 })
+    let fsm = FsmBuilder::new(FloatState::Normal { value: 1.0 })
         .when("Normal")
         .on("MakeNan", |_state, _event, _ctx: &mut FloatContext| {
             Box::pin(async {
                 Ok(Transition {
-                    next_state: FloatState::WithNan { value: NAN },
+                    next_state: FloatState::WithNan { value: f64::NAN },
                     actions: vec![],
                 })
             })
@@ -598,10 +602,7 @@ async fn test_state_equality_edge_cases() {
     let mut ctx = FloatContext;
 
     // Test NaN handling
-    machine
-        .handle(FloatEvent::MakeNan, &mut ctx)
-        .await
-        .unwrap();
+    machine.handle(FloatEvent::MakeNan, &mut ctx).await.unwrap();
     if let FloatState::WithNan { value } = machine.state() {
         assert!(value.is_nan());
     }
@@ -670,24 +671,24 @@ async fn test_many_states() {
     struct Transition_;
 
     struct EmptyCtx;
-    
+
     impl FsmContext for EmptyCtx {}
-    
+
     #[async_trait::async_trait]
     impl FsmAction for Transition_ {
         type Context = EmptyCtx;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             Ok(())
         }
     }
 
     let mut builder =
-        obzenflow_fsm::internal::FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
-    
+        FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
+
     // Add transitions for each state
     for i in 0..9 {
-        let state_name = format!("State{}", i);
+        let state_name = format!("State{i}");
         let next_state = match i {
             0 => ManyStates::State1,
             1 => ManyStates::State2,
@@ -700,7 +701,7 @@ async fn test_many_states() {
             8 => ManyStates::State9,
             _ => ManyStates::State0,
         };
-        
+
         builder = builder
             .when(&state_name)
             .on("Next", move |_state, _event, _ctx: &mut EmptyCtx| {
@@ -714,7 +715,7 @@ async fn test_many_states() {
             })
             .done();
     }
-    
+
     // Add reset from any state
     builder = builder
         .from_any()
@@ -727,7 +728,7 @@ async fn test_many_states() {
             })
         })
         .done();
-    
+
     let mut machine = builder.build();
     let mut ctx = EmptyCtx;
 

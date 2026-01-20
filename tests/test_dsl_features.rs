@@ -79,7 +79,10 @@ async fn test_dsl_entry_exit_and_unhandled() {
             let state_name = state.variant_name().to_string();
             let event_name = event.variant_name().to_string();
             Box::pin(async move {
-                ctx.log.write().await.push(format!("Unhandled {} in {}", event_name, state_name));
+                ctx.log
+                    .write()
+                    .await
+                    .push(format!("Unhandled {event_name} in {state_name}"));
                 Ok(())
             })
         };

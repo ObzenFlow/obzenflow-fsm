@@ -31,15 +31,17 @@
 //! - Tests our ability to handle complex inter-FSM communication
 //! - Proves the FSM can maintain order even when demons attack from multiple angles
 
-use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+#![allow(deprecated)]
+
 use async_trait::async_trait;
-use std::sync::Arc;
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, broadcast, mpsc, Barrier};
-use tokio::time::sleep;
 use tokio::select;
+use tokio::sync::{broadcast, mpsc, Barrier, RwLock};
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_2_async_coordination_nightmare() {
@@ -228,9 +230,14 @@ async fn test_2_async_coordination_nightmare() {
     let pipeline_handle = tokio::spawn(async move {
         let mut ctx = pipeline_ctx;
 
-        let mut fsm = obzenflow_fsm::internal::FsmBuilder::<PipelineState, PipelineEvent, CoordinationContext, CoordAction>::new(PipelineState::Initializing)
+        let mut fsm =
+            FsmBuilder::<PipelineState, PipelineEvent, CoordinationContext, CoordAction>::new(
+                PipelineState::Initializing,
+            )
             .when("Initializing")
-                .on("Start", move |_state, _event, ctx: &mut CoordinationContext| {
+            .on(
+                "Start",
+                move |_state, _event, ctx: &mut CoordinationContext| {
                     Box::pin(async move {
                         ctx.event_log
                             .write()
@@ -241,10 +248,13 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![],
                         })
                     })
-                })
-                .done()
+                },
+            )
+            .done()
             .when("WaitingForStages")
-                .on("StageReady", move |_state, event, ctx: &mut CoordinationContext| {
+            .on(
+                "StageReady",
+                move |_state, event, ctx: &mut CoordinationContext| {
                     let event = event.clone();
                     Box::pin(async move {
                         if let PipelineEvent::StageReady { stage_id } = event {
@@ -252,7 +262,7 @@ async fn test_2_async_coordination_nightmare() {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Pipeline: Stage {} ready", stage_id));
+                                .push(format!("Pipeline: Stage {stage_id} ready"));
 
                             if ctx.ready_stages.read().await.len() == 5 {
                                 // All stages ready, notify via event
@@ -264,8 +274,11 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![],
                         })
                     })
-                })
-                .on("AllStagesReady", move |_state, _event, ctx: &mut CoordinationContext| {
+                },
+            )
+            .on(
+                "AllStagesReady",
+                move |_state, _event, ctx: &mut CoordinationContext| {
                     Box::pin(async move {
                         ctx.event_log
                             .write()
@@ -283,10 +296,13 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![CoordAction::WaitAtBarrier],
                         })
                     })
-                })
-                .done()
+                },
+            )
+            .done()
             .when("Running")
-                .on("BeginShutdown", move |_state, _event, ctx: &mut CoordinationContext| {
+            .on(
+                "BeginShutdown",
+                move |_state, _event, ctx: &mut CoordinationContext| {
                     Box::pin(async move {
                         ctx.event_log
                             .write()
@@ -301,10 +317,13 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![CoordAction::BroadcastShutdown],
                         })
                     })
-                })
-                .done()
+                },
+            )
+            .done()
             .when("Draining")
-                .on("StageDrained", move |_state, event, ctx: &mut CoordinationContext| {
+            .on(
+                "StageDrained",
+                move |_state, event, ctx: &mut CoordinationContext| {
                     let event = event.clone();
                     Box::pin(async move {
                         if let PipelineEvent::StageDrained { stage_id } = event {
@@ -312,7 +331,7 @@ async fn test_2_async_coordination_nightmare() {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Pipeline: Stage {} drained", stage_id));
+                                .push(format!("Pipeline: Stage {stage_id} drained"));
 
                             if ctx.drained_stages.read().await.len() == 5 {
                                 let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesDrained).await;
@@ -323,8 +342,11 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![],
                         })
                     })
-                })
-                .on("AllStagesDrained", move |_state, _event, ctx: &mut CoordinationContext| {
+                },
+            )
+            .on(
+                "AllStagesDrained",
+                move |_state, _event, ctx: &mut CoordinationContext| {
                     Box::pin(async move {
                         ctx.event_log
                             .write()
@@ -335,8 +357,9 @@ async fn test_2_async_coordination_nightmare() {
                             actions: vec![],
                         })
                     })
-                })
-                .done()
+                },
+            )
+            .done()
             .build();
 
         // Pipeline event loop
@@ -379,14 +402,19 @@ async fn test_2_async_coordination_nightmare() {
         let handle = tokio::spawn(async move {
             let mut ctx = stage_ctx;
 
-            let mut fsm = obzenflow_fsm::internal::FsmBuilder::<StageState, StageEvent, CoordinationContext, CoordAction>::new(StageState::Uninitialized)
+            let mut fsm =
+                FsmBuilder::<StageState, StageEvent, CoordinationContext, CoordAction>::new(
+                    StageState::Uninitialized,
+                )
                 .when("Uninitialized")
-                    .on("Initialize", move |_state, _event, ctx: &mut CoordinationContext| {
+                .on(
+                    "Initialize",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {}: Initializing", stage_id));
+                                .push(format!("Stage {stage_id}: Initializing"));
 
                             // Simulate materialization delay
                             sleep(Duration::from_millis(10 + stage_id as u64 * 5)).await;
@@ -414,15 +442,18 @@ async fn test_2_async_coordination_nightmare() {
                                 actions: vec![],
                             })
                         })
-                    })
-                    .done()
+                    },
+                )
+                .done()
                 .when("Materializing")
-                    .on("MaterializationComplete", move |_state, _event, ctx: &mut CoordinationContext| {
+                .on(
+                    "MaterializationComplete",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {}: Materialized", stage_id));
+                                .push(format!("Stage {stage_id}: Materialized"));
 
                             // Notify pipeline we're ready
                             let _ = ctx
@@ -435,15 +466,18 @@ async fn test_2_async_coordination_nightmare() {
                                 actions: vec![CoordAction::NotifyPipeline],
                             })
                         })
-                    })
-                    .done()
+                    },
+                )
+                .done()
                 .when("Materialized")
-                    .on("StartProcessing", move |_state, _event, ctx: &mut CoordinationContext| {
+                .on(
+                    "StartProcessing",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {}: Starting processing", stage_id));
+                                .push(format!("Stage {stage_id}: Starting processing"));
 
                             // Wait at barrier for coordinated start
                             ctx.startup_barrier.wait().await;
@@ -453,30 +487,36 @@ async fn test_2_async_coordination_nightmare() {
                                 actions: vec![],
                             })
                         })
-                    })
-                    .done()
+                    },
+                )
+                .done()
                 .when("Running")
-                    .on("ProcessEvent", move |_state, event, ctx: &mut CoordinationContext| {
+                .on(
+                    "ProcessEvent",
+                    move |_state, event, ctx: &mut CoordinationContext| {
                         let event = event.clone();
                         Box::pin(async move {
                             if let StageEvent::ProcessEvent { data } = event {
                                 ctx.event_log
                                     .write()
                                     .await
-                                    .push(format!("Stage {}: Processing {}", stage_id, data));
+                                    .push(format!("Stage {stage_id}: Processing {data}"));
                             }
                             Ok(Transition {
                                 next_state: StageState::Running,
                                 actions: vec![],
                             })
                         })
-                    })
-                    .on("BeginDrain", move |_state, _event, ctx: &mut CoordinationContext| {
+                    },
+                )
+                .on(
+                    "BeginDrain",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {}: Beginning drain", stage_id));
+                                .push(format!("Stage {stage_id}: Beginning drain"));
 
                             // Simulate drain work
                             sleep(Duration::from_millis(50 - stage_id as u64 * 5)).await;
@@ -503,15 +543,18 @@ async fn test_2_async_coordination_nightmare() {
                                 actions: vec![],
                             })
                         })
-                    })
-                    .done()
+                    },
+                )
+                .done()
                 .when("Draining")
-                    .on("DrainComplete", move |_state, _event, ctx: &mut CoordinationContext| {
+                .on(
+                    "DrainComplete",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
                         Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {}: Drained", stage_id));
+                                .push(format!("Stage {stage_id}: Drained"));
 
                             // Notify pipeline we're drained
                             let _ = ctx
@@ -524,8 +567,9 @@ async fn test_2_async_coordination_nightmare() {
                                 actions: vec![],
                             })
                         })
-                    })
-                    .done()
+                    },
+                )
+                .done()
                 .build();
 
             // Stage event loop
@@ -571,18 +615,24 @@ async fn test_2_async_coordination_nightmare() {
         if let Some(tx) = stage_txs.get(&i) {
             for j in 0..3 {
                 tx.send(StageEvent::ProcessEvent {
-                    data: format!("event_{}", j)
-                }).await.unwrap();
+                    data: format!("event_{j}"),
+                })
+                .await
+                .unwrap();
             }
         }
     }
 
     // Begin shutdown
-    ctx.pipeline_tx.send(PipelineEvent::BeginShutdown).await.unwrap();
+    ctx.pipeline_tx
+        .send(PipelineEvent::BeginShutdown)
+        .await
+        .unwrap();
 
     // Wait for all components to complete
     let pipeline_fsm = pipeline_handle.await.unwrap();
-    let stage_fsms: Vec<_> = futures::future::join_all(stage_handles).await
+    let stage_fsms: Vec<_> = futures::future::join_all(stage_handles)
+        .await
         .into_iter()
         .map(|r| r.unwrap())
         .collect();
@@ -598,16 +648,31 @@ async fn test_2_async_coordination_nightmare() {
 
     // All stages should initialize before any materialize
     let first_materialized = log.iter().position(|s| s.contains("Materialized")).unwrap();
-    let last_initialized = log.iter().rposition(|s| s.contains("Initializing")).unwrap();
+    let last_initialized = log
+        .iter()
+        .rposition(|s| s.contains("Initializing"))
+        .unwrap();
     assert!(last_initialized < first_materialized);
 
     // All stages should be ready before pipeline starts them
-    let pipeline_start = log.iter().position(|s| s.contains("All stages ready")).unwrap();
-    let first_processing = log.iter().position(|s| s.contains("Starting processing")).unwrap();
+    let pipeline_start = log
+        .iter()
+        .position(|s| s.contains("All stages ready"))
+        .unwrap();
+    let first_processing = log
+        .iter()
+        .position(|s| s.contains("Starting processing"))
+        .unwrap();
     assert!(pipeline_start < first_processing);
 
     // Shutdown should happen in order
-    let shutdown_start = log.iter().position(|s| s.contains("Beginning shutdown")).unwrap();
-    let first_drain = log.iter().position(|s| s.contains("Beginning drain")).unwrap();
+    let shutdown_start = log
+        .iter()
+        .position(|s| s.contains("Beginning shutdown"))
+        .unwrap();
+    let first_drain = log
+        .iter()
+        .position(|s| s.contains("Beginning drain"))
+        .unwrap();
     assert!(shutdown_start < first_drain);
 }

@@ -1,12 +1,19 @@
 //! Fluent builder API for creating FSMs (inspired by Akka Classic FSM)
 
+#![allow(deprecated)]
+
 use crate::handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 use crate::machine::StateMachine;
-use crate::types::{BoxFuture, FsmAction, FsmContext, FsmResult, StateVariant, EventVariant, Transition};
+use crate::types::{
+    BoxFuture, EventVariant, FsmAction, FsmContext, FsmResult, StateVariant, Transition,
+};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::time::Duration;
+
+type UnhandledHandler<S, E, C> =
+    Arc<dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync>;
 
 /// Main builder for creating FSMs.
 ///
@@ -27,13 +34,7 @@ pub struct FsmBuilder<S, E, C, A> {
     duplicate_handlers: Vec<(String, String)>,
     /// When true, apply additional validation at build time
     strict_validation: bool,
-    unhandled_handler: Option<
-        Arc<
-            dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>>
-                + Send
-                + Sync,
-        >,
-    >,
+    unhandled_handler: Option<UnhandledHandler<S, E, C>>,
     _phantom: PhantomData<(E, C)>,
 }
 
@@ -104,7 +105,10 @@ where
     /// Define handler for unhandled events
     pub fn when_unhandled<F>(mut self, handler: F) -> Self
     where
-        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>>
+            + Send
+            + Sync
+            + 'static,
     {
         self.unhandled_handler = Some(Arc::new(move |s, e, c| handler(s, e, c)));
         self
@@ -119,10 +123,8 @@ where
     where
         F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
     {
-        self.entry_handlers.insert(
-            state_name.to_string(),
-            Arc::new(move |s, c| handler(s, c)),
-        );
+        self.entry_handlers
+            .insert(state_name.to_string(), Arc::new(move |s, c| handler(s, c)));
         self
     }
 
@@ -135,10 +137,8 @@ where
     where
         F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
     {
-        self.exit_handlers.insert(
-            state_name.to_string(),
-            Arc::new(move |s, c| handler(s, c)),
-        );
+        self.exit_handlers
+            .insert(state_name.to_string(), Arc::new(move |s, c| handler(s, c)));
         self
     }
 
@@ -174,8 +174,7 @@ where
 
             if !has_transition && !has_timeout {
                 return Err(crate::error::FsmError::BuilderError(format!(
-                    "No transitions or timeout configured for initial state '{}'",
-                    initial_state_name
+                    "No transitions or timeout configured for initial state '{initial_state_name}'"
                 )));
             }
         }
@@ -211,7 +210,10 @@ where
     )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
-        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
+            + Send
+            + Sync
+            + 'static,
     {
         let key = (self.state_name.clone(), event_name.to_string());
         if self.builder.transitions.contains_key(&key) {
@@ -228,7 +230,10 @@ where
     /// Define a timeout for this state
     pub fn timeout<F>(self, duration: Duration, handler: F) -> TimeoutBuilder<S, E, C, A>
     where
-        F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
+        F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
+            + Send
+            + Sync
+            + 'static,
     {
         let mut builder = self.builder;
         builder.timeout_handlers.insert(
@@ -267,7 +272,10 @@ where
     )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
-        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>> + Send + Sync + 'static,
+        F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
+            + Send
+            + Sync
+            + 'static,
     {
         self.builder.transitions.insert(
             (self.state_name.clone(), event_name.to_string()),
@@ -366,17 +374,17 @@ mod tests {
     }
 
     struct DoorContext;
-    
+
     impl crate::FsmContext for DoorContext {
         fn describe(&self) -> String {
             "Door FSM context".to_string()
         }
     }
-    
+
     #[async_trait::async_trait]
     impl crate::FsmAction for DoorAction {
         type Context = DoorContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> crate::types::FsmResult<()> {
             match self {
                 DoorAction::Ring => {
@@ -384,7 +392,7 @@ mod tests {
                     Ok(())
                 }
                 DoorAction::Log(msg) => {
-                    println!("Log: {}", msg);
+                    println!("Log: {msg}");
                     Ok(())
                 }
             }
@@ -462,6 +470,15 @@ mod tests {
         let actions = door.handle(DoorEvent::Close, &mut ctx).await.unwrap();
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], DoorAction::Log(_)));
+        assert!(matches!(door.state(), DoorState::Closed));
+
+        // Exercise Lock/Unlock so the enum variants are constructed.
+        let actions = door.handle(DoorEvent::Lock, &mut ctx).await.unwrap();
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(door.state(), DoorState::Locked));
+
+        let actions = door.handle(DoorEvent::Unlock, &mut ctx).await.unwrap();
+        assert_eq!(actions.len(), 1);
         assert!(matches!(door.state(), DoorState::Closed));
     }
 }
