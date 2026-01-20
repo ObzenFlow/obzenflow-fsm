@@ -1,4 +1,4 @@
-//! Async-first finite state machine (FSM) library inspired by Akka (Classic) FSM and
+//! Async-first finite state machine (FSM) library inspired by Akka / Apache Pekko (Classic) FSM and
 //! [`edfsm`](https://docs.rs/edfsm).
 //!
 //! `obzenflow-fsm` implements a small **Mealy-machine** core:
@@ -35,10 +35,11 @@
 //! `obzenflow-fsm` is designed so those realities stay visible. Transition handlers compute the
 //! next state and return actions; the host executes (and can retry) actions explicitly.
 //!
-//! For outcomes that stay stable under duplicates, interleavings, and reshaping (batching/sharding),
-//! the tests are essentially pointing at the “unholy trinity” of distributed systems failures: fuzzy or broken
-//! **idempotent × commutative × associative** guarantees. These are *sufficient conditions* for many
-//! dataflow operators, not universal requirements (some domains are intentionally order-dependent).
+//! For outcomes that stay stable under duplicates, interleavings, and reshaping (batching/
+//! sharding), the tests are essentially pointing at the "unholy trinity" of distributed systems
+//! failures: fuzzy or broken idempotence, commutativity, and associativity guarantees. These are
+//! sufficient conditions for many dataflow operators, not universal requirements (some domains
+//! are intentionally order-dependent).
 //!
 //! - **Idempotence**: applying the same logical input more than once has the same effect as
 //!   applying it once.
@@ -79,8 +80,7 @@
 //! A tiny "door" FSM with explicit actions:
 //!
 //! Note on handler syntax: `fsm!` stores handlers behind trait objects, so each handler closure
-//! returns a boxed pinned future (`Pin<Box<dyn Future + Send + '_>>`). That’s why examples use
-//! `Box::pin(async move { ... })`.
+//! returns a boxed pinned future. That’s why examples use `Box::pin(async move { ... })`.
 //!
 //! ```rust
 //! use obzenflow_fsm::{fsm, types::FsmResult, FsmAction, FsmContext, Transition};
