@@ -12,37 +12,42 @@
 //! This split makes it easy to build deterministic state evolution while keeping side effects
 //! explicit and auditable (e.g. write-to-journal, publish-to-bus, spawn tasks).
 //!
-//! ## Key Differences vs `edfsm`
+//! ## Why This Crate Exists (ObzenFlow Background)
 //!
-//! [`edfsm`](https://docs.rs/edfsm) is an event-driven FSM with a `Command`/`Event` split and a
-//! separate effect handler; it's `no_std` and keeps effects synchronous by design.
+//! ObzenFlow is an async dataflow runtime. Pipeline/stage supervisors coordinate lifecycles,
+//! subscriptions, backpressure, and observability while executing **user-defined code** (sources,
+//! transforms, stateful operators, sinks) potentially thousands of times per second.
 //!
-//! `obzenflow-fsm` makes different trade-offs for async supervisor-style runtimes:
-//! - **Async-first**: handlers and actions are async (Tokio-friendly).
-//! - **Explicit effects**: transitions return `Vec<Action>`; effects run only when the host calls
-//!   [`FsmAction::execute`].
-//! - **Single input type**: there is one `Event` type; "commands" can be modeled as event variants.
-//! - **Runtime hooks**: entry/exit handlers and cooperative per-state timeouts are built into
-//!   [`StateMachine`].
+//! That runtime context drives a few non-negotiable constraints:
+//! - A "step" often needs to `await` (journals, channels, locks, timers, user code).
+//! - Failures must be handled explicitly (emit an error event, drain/cleanup) rather than panic.
+//! - The host needs control over effect execution (ordering, retries, batching, instrumentation).
 //!
-//! If you're coming from `edfsm`, a rough mapping is:
-//! - `Command`/`Event` inputs → a single `Event` enum (external commands and internal signals as
-//!   variants).
-//! - The effect handler (`SE`) → an `Action` enum executed against your runtime `Context`.
+//! Those constraints led to the shape of `obzenflow-fsm`:
+//! - **Async-first transitions**: handlers are async and return a [`Transition`].
+//! - **Explicit actions**: handlers *describe* effects as values (`Vec<Action>`); supervisors decide
+//!   when/how to run them via [`FsmAction::execute`].
+//! - **Host-driven timeouts**: timeouts are cooperative (no background timer tasks per state), so
+//!   supervisors can integrate timeout checks into their event loops.
 //!
-//! For replay-style flows, keep transition handlers free of external side effects and execute
-//! actions only in "live" mode.
+//! The overall design is inspired by Akka (Classic) FSM, and informed by experience with other FSM
+//! libraries such as `edfsm`: keep state evolution easy to reason about, and make effects explicit
+//! so a host loop can supervise them.
 //!
-//! If you want a synchronous, event-sourcing-oriented FSM core where `Command -> Event -> State`
-//! is the primary model, `edfsm` is an excellent choice. If you want async actions and an explicit
-//! supervisor/host-loop integration style, this crate is optimized for that.
+//! Tip: if you care about replay/event-sourcing, keep transition handlers free of external side
+//! effects and model effects only as actions. In live mode you execute actions; in replay mode you
+//! can ignore them.
 //!
 //! ## Quick start
 //!
 //! A tiny "door" FSM with explicit actions:
 //!
+//! Note on handler syntax: `fsm!` stores handlers behind trait objects, so each handler closure
+//! returns a boxed pinned future (`Pin<Box<dyn Future + Send + '_>>`). That’s why examples use
+//! `Box::pin(async move { ... })`.
+//!
 //! ```rust
-//! use obzenflow_fsm::{fsm, FsmAction, FsmContext, Transition};
+//! use obzenflow_fsm::{fsm, types::FsmResult, FsmAction, FsmContext, Transition};
 //!
 //! #[derive(Clone, Debug, PartialEq, obzenflow_fsm::StateVariant)]
 //! enum DoorState {
@@ -73,7 +78,7 @@
 //! impl FsmAction for DoorAction {
 //!     type Context = DoorContext;
 //!
-//!     async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
+//!     async fn execute(&self, ctx: &mut Self::Context) -> FsmResult<()> {
 //!         match self {
 //!             DoorAction::Ring => ctx.log.push("Ring!".to_string()),
 //!             DoorAction::Log(msg) => ctx.log.push(msg.clone()),
@@ -83,7 +88,7 @@
 //! }
 //!
 //! #[tokio::main(flavor = "current_thread")]
-//! async fn main() -> Result<(), obzenflow_fsm::FsmError> {
+//! async fn main() -> FsmResult<()> {
 //!     let mut door = fsm! {
 //!         state:   DoorState;
 //!         event:   DoorEvent;
@@ -92,18 +97,30 @@
 //!         initial: DoorState::Closed;
 //!
 //!         state DoorState::Closed {
-//!             on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+//!             on DoorEvent::Open => |
+//!                 _s: &DoorState,
+//!                 _e: &DoorEvent,
+//!                 _ctx: &mut DoorContext,
+//!             | {
+//!                 // `fsm!` expects a boxed pinned future from each handler.
 //!                 Box::pin(async move {
 //!                     Ok(Transition {
 //!                         next_state: DoorState::Open,
-//!                         actions: vec![DoorAction::Ring, DoorAction::Log("Door opened".into())],
+//!                         actions: vec![
+//!                             DoorAction::Ring,
+//!                             DoorAction::Log("Door opened".into()),
+//!                         ],
 //!                     })
 //!                 })
 //!             };
 //!         }
 //!
 //!         state DoorState::Open {
-//!             on DoorEvent::Close => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+//!             on DoorEvent::Close => |
+//!                 _s: &DoorState,
+//!                 _e: &DoorEvent,
+//!                 _ctx: &mut DoorContext,
+//!             | {
 //!                 Box::pin(async move {
 //!                     Ok(Transition {
 //!                         next_state: DoorState::Closed,
@@ -136,6 +153,8 @@
 //! }
 //! ```
 //!
+//! The rest of this page focuses on the patterns used to run FSMs inside an async runtime.
+//!
 //! ## Supervisor / host loop pattern
 //!
 //! The FSM is usually embedded in a "host loop" (an actor/supervisor task) that:
@@ -147,6 +166,9 @@
 //! In ObzenFlow's runtime-services, a supervisor typically owns the `StateMachine` plus a context
 //! that holds runtime capabilities (journals, message bus handles, metrics emitters). The
 //! supervision loop drives the FSM forward and treats actions as explicit, auditable effects.
+//! The "hot path" where user-defined handlers run (process one input, emit zero or more outputs)
+//! usually lives in the dispatch layer; the FSM primarily models lifecycle coordination and
+//! produces actions like "publish running", "forward EOF", "write completion", "cleanup", etc.
 //!
 //! Concretely, supervisors often split into two layers:
 //! - A "dispatch" loop (sometimes named `dispatch_state`) that performs state-specific I/O and
@@ -265,6 +287,7 @@
 //!
 //!         state DoorState::Open {
 //!             timeout Duration::from_millis(10) => |_s: &DoorState, _ctx: &mut DoorContext| {
+//!                 // Timeout handlers are the same idea: return a boxed pinned future.
 //!                 Box::pin(async move {
 //!                     Ok(Transition {
 //!                         next_state: DoorState::Closed,
