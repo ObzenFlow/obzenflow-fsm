@@ -23,20 +23,56 @@
 //! - Failures must be handled explicitly (emit an error event, drain/cleanup) rather than panic.
 //! - The host needs control over effect execution (ordering, retries, batching, instrumentation).
 //!
-//! Those constraints led to the shape of `obzenflow-fsm`:
-//! - **Async-first transitions**: handlers are async and return a [`Transition`].
-//! - **Explicit actions**: handlers *describe* effects as values (`Vec<Action>`); supervisors decide
-//!   when/how to run them via [`FsmAction::execute`].
-//! - **Host-driven timeouts**: timeouts are cooperative (no background timer tasks per state), so
-//!   supervisors can integrate timeout checks into their event loops.
+//! ## Philosophy
 //!
-//! The overall design is inspired by Akka (Classic) FSM, and informed by experience with other FSM
-//! libraries such as `edfsm`: keep state evolution easy to reason about, and make effects explicit
-//! so a host loop can supervise them.
+//! ObzenFlow’s runtime makes *at-least-once* delivery the default. An event may be retried or
+//! replayed and therefore observed more than once.
 //!
-//! Tip: if you care about replay/event-sourcing, keep transition handlers free of external side
-//! effects and model effects only as actions. In live mode you execute actions; in replay mode you
-//! can ignore them.
+//! When a stage has multiple upstreams, each upstream may be sequential on its own, but the
+//! *interleaving across upstreams* is nondeterministic. In practice this means the combined stream
+//! can be “reordered”, even if no single upstream violates its own ordering.
+//!
+//! `obzenflow-fsm` is designed so those realities stay visible. Transition handlers compute the
+//! next state and return actions; the host executes (and can retry) actions explicitly.
+//!
+//! For outcomes that stay stable under duplicates, interleavings, and reshaping (batching/sharding),
+//! the tests are essentially pointing at the “unholy trinity” of distributed systems failures: fuzzy or broken
+//! **idempotent × commutative × associative** guarantees. These are *sufficient conditions* for many
+//! dataflow operators, not universal requirements (some domains are intentionally order-dependent).
+//!
+//! - **Idempotence**: applying the same logical input more than once has the same effect as
+//!   applying it once.
+//!   In practice, naively doing `credit += amount` is not idempotent under retries, it only becomes
+//!   idempotent if you deduplicate by a stable key (event ID, business key, or a durable cursor).
+//!   Prefer bounded/durable tracking when possible (sequence numbers, journal offsets, windowed
+//!   keys). In ObzenFlow’s runtime-services, stateful stage supervisors already keep bounded per-upstream
+//!   progress/lineage metadata (e.g. last seen event ID *and* vector-clock snapshots) alongside the
+//!   handler’s accumulator state.
+//!
+//! - **Commutativity**: swapping the order of two inputs does not change the outcome.
+//!   If your update is order-dependent (e.g. appending into a `Vec`), that can be correct, but
+//!   then you must model ordering explicitly (total ordering / deterministic tie-breaks) instead of
+//!   assuming reordering is harmless. In ObzenFlow, vector clocks capture happened-before vs concurrency, but they do
+//!   **not** impose a total order on concurrent events, so they can’t be used as an ordering key by
+//!   themselves.
+//!
+//! - **Associativity**: when you represent updates as deltas/partials with a “combine” operator,
+//!   regrouping combinations does not change the result: `(a ⊕ b) ⊕ c == a ⊕ (b ⊕ c)`.
+//!   This is what makes batching and parallel folding safe: combine partial aggregates in any
+//!   grouping and get the same combined delta. If you can only define a sequential update (or use a
+//!   non-associative operator like subtraction), then “batch then reduce” is not equivalent to
+//!   “apply one-by-one”.
+//!
+//! When a property does *not* hold, model that explicitly: carry ordering metadata, detect and
+//! surface duplicates, or transition into a domain `Corrupted`/`Failed` state instead of silently
+//! producing inconsistent results.
+//!
+//! Tip: if you care about replay/event-sourcing, keep state evolution deterministic and model
+//! external effects only as actions. In replay mode you can ignore actions; in live mode you
+//! execute them.
+//!
+//! Also apply idempotence to control/lifecycle signals where possible (e.g. receiving an `Error`
+//! while already in a terminal `Failed` state should be a no-op) so retries don’t amplify failures.
 //!
 //! ## Quick start
 //!

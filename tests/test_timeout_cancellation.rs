@@ -1,4 +1,4 @@
-//! Test 5: The Timeout and Cancellation Inferno (Purgatory) ⏳
+//! Test 5: The Timeout and Cancellation Inferno (Purgatory) 😈
 //!
 //! The Jonestown Protocol Under Fire:
 //! - FSMs trapped in purgatory (long async operations with data)
@@ -144,7 +144,7 @@ async fn test_5_timeout_cancellation_inferno() {
 
     // === PURGATORY TRIALS ===
 
-    println!("😈 Trial 1: The Just-In-Time Escape (9ms operations with 10ms timeout)");
+    // Trial 1: The Just-In-Time Escape (9ms operations with 10ms timeout)
     let mut ctx = PurgatoryContext {
         downstream: Arc::new(RwLock::new(vec![])),
         all_data_seen: Arc::new(RwLock::new(vec![])),
@@ -178,12 +178,6 @@ async fn test_5_timeout_cancellation_inferno() {
                     } = &state
                     {
                         if !data_buffer.is_empty() || *in_flight > 0 {
-                            println!(
-                                "⚠️ TIMEOUT WITH {} BUFFERED, {} IN FLIGHT - INITIATING JONESTOWN",
-                                data_buffer.len(),
-                                in_flight
-                            );
-
                             Ok(Transition {
                                 next_state: PurgatoryState::DrinkingKoolAid(format!(
                                     "Timeout with {} uncommitted messages",
@@ -305,14 +299,18 @@ async fn test_5_timeout_cancellation_inferno() {
     while rx.try_recv().is_ok() {
         received_count += 1;
     }
-    println!("✅ Received {received_count} messages before timeout");
+    assert_eq!(
+        received_count,
+        critical_data.len(),
+        "Expected all buffered messages to reach downstream before timeout"
+    );
 
     assert!(
         matches!(machine1.state(), PurgatoryState::Processing { .. }),
         "Should have escaped purgatory!"
     );
 
-    println!("\n😈 Trial 2: The Condemned (50ms operations with 10ms timeout)");
+    // Trial 2: The Condemned (50ms operations with 10ms timeout)
     let mut ctx2 = PurgatoryContext {
         downstream: Arc::new(RwLock::new(vec![])),
         all_data_seen: Arc::new(RwLock::new(vec![])),
@@ -435,7 +433,7 @@ async fn test_5_timeout_cancellation_inferno() {
         "FSM should be dead after drinking kool-aid!"
     );
 
-    println!("\n😈 Trial 3: The Downstream Death Cascade");
+    // Trial 3: The Downstream Death Cascade
     // Test what happens when downstream is already dead
     let mut ctx3 = PurgatoryContext {
         downstream: Arc::new(RwLock::new(vec![])),
@@ -534,9 +532,6 @@ async fn test_5_timeout_cancellation_inferno() {
         matches!(machine3.state(), PurgatoryState::DrinkingKoolAid(_)),
         "Should initiate Jonestown when downstream is dead!"
     );
-
-    println!("\n🔥 Purgatory trials complete!");
-    println!("✝️ The Jonestown Protocol preserved AT LEAST ONCE even under timeout pressure!");
 
     // "Better to die with honor than live with dropped messages" - FLOWIP-075a
 }

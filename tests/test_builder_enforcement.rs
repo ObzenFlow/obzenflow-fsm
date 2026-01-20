@@ -59,7 +59,7 @@ impl FsmAction for DemoAction {
 
 #[test]
 fn test_fsm_works_via_builder() {
-    // ✅ This is the CORRECT way - using FsmBuilder
+    // This is the correct way: use `FsmBuilder`.
     let fsm = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
         .when("Start")
         .on(
@@ -83,7 +83,7 @@ fn test_fsm_works_via_builder() {
 // The following examples demonstrate what CANNOT be done:
 
 /*
-// ❌ COMPILE ERROR: Cannot import and use StateMachine::new directly
+// COMPILE ERROR: Cannot import and use `StateMachine::new` directly.
 #[test]
 fn test_direct_construction_fails() {
     use obzenflow_fsm::StateMachine;
@@ -101,7 +101,7 @@ fn test_direct_construction_fails() {
 */
 
 /*
-// ❌ COMPILE ERROR: Cannot access new() even with full path
+// COMPILE ERROR: Cannot access `new()` even with full path.
 #[test]
 fn test_full_path_construction_fails() {
     use std::collections::HashMap;
@@ -118,7 +118,7 @@ fn test_full_path_construction_fails() {
 */
 
 /*
-// ❌ COMPILE ERROR: Cannot circumvent by re-exporting
+// COMPILE ERROR: Cannot circumvent by re-exporting.
 mod sneaky {
     pub use obzenflow_fsm::*;
 }
@@ -156,8 +156,8 @@ fn test_reexport_construction_fails() {
 /// - Prevents creation of invalid or incomplete state machines
 #[test]
 fn test_builder_enforcement_documentation() {
-    println!("StateMachine::new is pub(crate) - only FsmBuilder can create instances");
-    println!("This enforces proper FSM construction patterns");
+    // Documentation-only test: see the rustdoc on this function for manual verification steps.
+    assert!(true);
 }
 
 #[test]

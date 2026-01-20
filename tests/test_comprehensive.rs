@@ -904,10 +904,7 @@ async fn test_entry_exit_handlers() {
 
         async fn execute(&self, _ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
-                LifecycleAction::Log(msg) => {
-                    println!("Log: {msg}");
-                    Ok(())
-                }
+                LifecycleAction::Log(_msg) => Ok(()),
                 LifecycleAction::AllocateResources => Ok(()),
                 LifecycleAction::ReleaseResources => Ok(()),
             }

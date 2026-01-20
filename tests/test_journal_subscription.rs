@@ -1,4 +1,4 @@
-//! Test 3: The Journal Subscription Chaos (Tower of Babel) 🗼
+//! Test 3: The Journal Subscription Chaos (Tower of Babel) 😈
 //!
 //! The Confusion of Tongues:
 //! - Multiple FSMs speaking different event dialects
@@ -400,7 +400,6 @@ async fn test_3_journal_subscription_chaos() {
     // Check the journal integrity
     let journal = ctx.journal.read().await;
     let total_messages = journal.len();
-    println!("📜 Total messages written to journal: {total_messages}");
 
     // Verify vector clock consistency
     let mut has_causal_violations = false;
@@ -414,28 +413,24 @@ async fn test_3_journal_subscription_chaos() {
         }
     }
 
-    // Some chaos is expected, but not too much
-    if has_causal_violations {
-        println!("⚠️  Causal violations detected - the timeline is confused!");
-    }
+    // Some chaos is expected; this is a stress test rather than a strict causal-order proof.
+    // `has_causal_violations` remains available for debugging if the test ever needs to be
+    // tightened.
+    let _ = has_causal_violations;
 
     // Check subscriber results
     for (filter, count, out_of_order) in listeners {
-        println!("👂 Listener '{filter}' received {count} messages ({out_of_order} out of order)");
-
         // The "*" listener should receive most messages (minus dropped ones)
         if filter == "*" {
             let dropped = ctx.dropped_messages.load(Ordering::Relaxed);
-            println!("💀 Dropped messages due to overflow: {dropped}");
             assert!(
                 count + dropped >= total_messages * 80 / 100,
-                "Universal listener missed too many messages!"
+                "Universal listener missed too many messages (received={count}, dropped={dropped}, total={total_messages}, out_of_order={out_of_order})"
             );
         }
     }
 
     // === THE TOWER STANDS (despite the chaos) ===
-    println!("🏗️ The Tower of Babel test complete - journal integrity maintained!");
     assert!(total_messages >= 800, "Not enough messages were written!");
 
     // "Go to, let us go down, and there confound their language" - Genesis 11:7

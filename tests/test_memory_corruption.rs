@@ -1,4 +1,4 @@
-//! Test 6: The Memory Corruption Gauntlet (Testing the Incorruptible) 🛡️
+//! Test 6: The Memory Corruption Gauntlet (Testing the Incorruptible) 😈
 //!
 //! The Final Boss - Satan's Last Stand:
 //! - Cyclic references trying to create infinite loops
@@ -193,12 +193,11 @@ async fn test_6_memory_corruption_gauntlet() {
     impl Drop for CorruptionContext {
         fn drop(&mut self) {
             self.drop_count.fetch_add(1, Ordering::SeqCst);
-            println!("💀 Context {} dropped", self.id);
         }
     }
 
     // === TRIAL 1: The Ouroboros (Cyclic References) ===
-    println!("😈 Trial 1: The Ouroboros - Cyclic References");
+    // Trial 1: The Ouroboros (Cyclic References)
 
     let creation_count = Arc::new(AtomicUsize::new(0));
     let drop_count = Arc::new(AtomicUsize::new(0));
@@ -244,14 +243,13 @@ async fn test_6_memory_corruption_gauntlet() {
 
     let created = creation_count.load(Ordering::SeqCst);
     let dropped = drop_count.load(Ordering::SeqCst);
-    println!("✅ Created: {created}, Dropped: {dropped} (should be equal)");
     assert_eq!(
         created, dropped,
         "Memory leak detected! Contexts not dropped!"
     );
 
     // === TRIAL 2: The Abandoned Async Tasks ===
-    println!("\n😈 Trial 2: Abandoned Async Tasks");
+    // Trial 2: The Abandoned Async Tasks
 
     let task_creation_count = Arc::new(AtomicUsize::new(0));
     let task_completion_count = Arc::new(AtomicUsize::new(0));
@@ -295,11 +293,11 @@ async fn test_6_memory_corruption_gauntlet() {
 
     let created_tasks = task_creation_count.load(Ordering::SeqCst);
     let completed_tasks = task_completion_count.load(Ordering::SeqCst);
-    println!("✅ Tasks created: {created_tasks}, completed: {completed_tasks}");
     // Some tasks may not complete due to being dropped, but that's fine
+    let _ = (created_tasks, completed_tasks);
 
     // === TRIAL 3: The FSM Apocalypse (Mass Spawn/Kill) ===
-    println!("\n😈 Trial 3: The FSM Apocalypse - 1000 FSMs");
+    // Trial 3: The FSM Apocalypse (Mass Spawn/Kill)
 
     let fsm_count = Arc::new(AtomicUsize::new(0));
     let death_count = Arc::new(AtomicUsize::new(0));
@@ -307,7 +305,6 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Measure baseline memory
     let baseline_memory = get_approximate_memory();
-    println!("📊 Baseline memory: ~{baseline_memory} bytes");
 
     // Spawn 1000 FSMs
     for i in 0..1000 {
@@ -379,26 +376,22 @@ async fn test_6_memory_corruption_gauntlet() {
         let _ = handle.await;
     }
 
-    let spawned = fsm_count.load(Ordering::SeqCst);
-    let died = death_count.load(Ordering::SeqCst);
-    println!("✅ FSMs spawned: {spawned}, died: {died} (some aborted)");
+    let _spawned = fsm_count.load(Ordering::SeqCst);
+    let _died = death_count.load(Ordering::SeqCst);
 
     // Check memory returned to baseline (approximately)
     sleep(Duration::from_millis(100)).await; // Let things settle
     let final_memory = get_approximate_memory();
-    println!("📊 Final memory: ~{final_memory} bytes");
 
     // Memory should not grow unbounded
     let memory_growth = final_memory.saturating_sub(baseline_memory);
-    println!("📈 Memory growth: {memory_growth} bytes");
     assert!(
         memory_growth < 100 * 1024 * 1024,
-        "Memory leak detected! Growth: {} MB",
-        memory_growth / 1024 / 1024
+        "Memory leak detected (baseline={baseline_memory}, final={final_memory}, growth_bytes={memory_growth})"
     );
 
     // === TRIAL 4: The Self-Referential Nightmare ===
-    println!("\n😈 Trial 4: Self-Referential Nightmare");
+    // Trial 4: The Self-Referential Nightmare
 
     let nightmare_ctx = Arc::new(CorruptionContext::new(
         999,
@@ -416,19 +409,17 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Verify self-references exist
     let initial_strong_count = Arc::strong_count(&nightmare_ctx);
-    println!("🔄 Self-references created, strong count: {initial_strong_count}");
-    assert!(initial_strong_count > 1, "Self-references not created!");
+    assert!(
+        initial_strong_count > 1,
+        "Self-references not created (strong_count={initial_strong_count})"
+    );
 
     // Break self-references
     nightmare_ctx.break_cycles().await;
 
     // Verify cleanup
     let final_strong_count = Arc::strong_count(&nightmare_ctx);
-    println!("✅ Self-references broken, strong count: {final_strong_count}");
     assert_eq!(final_strong_count, 1, "Self-references not cleaned up!");
-
-    println!("\n🏆 THE INCORRUPTIBLE Arc<Context> HAS DEFEATED SATAN!");
-    println!("✝️ Memory corruption gauntlet complete - Rust's ownership is divine!");
 
     // "And God said, Let there be Arc: and there was Arc." - Genesis 1:3 (Rust edition)
 }

@@ -1,4 +1,4 @@
-//! Test 4: The Mark of the Beast - AT LEAST ONCE vs Mathematical Properties 🔢
+//! Test 4: The Mark of the Beast - AT LEAST ONCE vs Mathematical Properties 😈
 //!
 //! Satan's Mathematical Trickery:
 //! - 666 duplicate events (AT LEAST ONCE delivery guarantee)
@@ -325,7 +325,6 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     // === THE BEAST'S TRIALS ===
 
     // Trial 1: Duplicate Credits (testing idempotency)
-    println!("👹 Trial 1: Testing idempotency with duplicate credits");
     for i in 0..10 {
         let event = BeastEvent::Credit {
             id: format!("credit_{i}"),
@@ -339,7 +338,6 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     }
 
     if let BeastState::Counting { balance, .. } = machine.state() {
-        println!("💰 Balance after duplicate credits: {balance} (expected: 1000)");
         assert_eq!(
             balance, &1000,
             "Idempotency failed! Duplicate credits were processed"
@@ -347,7 +345,6 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     }
 
     // Trial 2: Non-commutative operations
-    println!("\n👹 Trial 2: Testing commutativity with appends");
     let append_events = vec![
         BeastEvent::Append {
             id: "1".to_string(),
@@ -427,15 +424,12 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         vec![]
     };
 
-    println!("📜 Ordered operations: {ordered_ops:?}");
-    println!("📜 Reversed operations: {reversed_ops:?}");
     assert_ne!(
         ordered_ops, reversed_ops,
         "Operations are commutative when they shouldn't be!"
     );
 
     // Trial 3: The Number of the Beast
-    println!("\n👹 Trial 3: Reaching 666 - The Mark of the Beast");
 
     // Send exactly 566 more credits to reach 666 from 1000
     for i in 0..566 {
@@ -464,10 +458,6 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
 
     if !already_corrupted {
         // Final balance should be 1000 - 566 = 434
-        if let BeastState::Counting { balance, .. } = machine.state() {
-            println!("💀 Balance before the mark: {balance}");
-        }
-
         // Now credit to reach exactly 666
         machine
             .handle(
@@ -481,39 +471,20 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
             .unwrap();
 
         // Check for the mark
-        let actions = machine
+        let _actions = machine
             .handle(BeastEvent::MarkOfBeast, &mut ctx)
             .await
             .unwrap();
-        println!("📋 Actions returned: {actions:?}");
-    }
-
-    // Debug print the final state
-    match machine.state() {
-        BeastState::Counting {
-            balance,
-            operations,
-            ..
-        } => {
-            println!(
-                "🔍 Final state: Counting {{ balance: {balance}, operations: {} }}",
-                operations.len()
-            );
-        }
-        BeastState::Corrupted(msg) => {
-            println!("💀 Final state: Corrupted({msg})");
-        }
-        _ => {}
     }
 
     assert!(
         matches!(machine.state(), BeastState::Corrupted(_)),
-        "The beast was not marked at 666!"
+        "expected Corrupted(_) after reaching 666, got {:?}",
+        machine.state()
     );
 
     let total_duplicates = ctx.duplicate_count.load(Ordering::Relaxed);
-    println!("\n🔥 Total duplicate events detected: {total_duplicates}");
-    println!("✝️ The Mark of the Beast test complete - mathematical properties exposed!");
+    assert!(total_duplicates > 0, "expected to detect duplicate events");
 
     // "Here is wisdom. Let him that hath understanding count the number of the beast" - Revelation 13:18
 }

@@ -1,4 +1,4 @@
-//! Test 2: The Async Coordination Nightmare 👹
+//! Test 2: The Async Coordination Nightmare 😈
 //!
 //! The Beast with Seven Heads:
 //! - 1 Pipeline FSM (the beast itself)
