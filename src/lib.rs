@@ -20,10 +20,10 @@ pub mod types;
 // Re-export main types for convenience
 pub use error::FsmError;
 pub use machine::StateMachine;
-pub use types::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+pub use types::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 
 // Re-export handler types for advanced usage
-pub use handlers::{TransitionHandler, StateHandler, TimeoutHandler};
+pub use handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 
 /// Internal types used by the `fsm!` macro expansion.
 ///
@@ -40,13 +40,16 @@ pub mod internal {
 // This allows users to write:
 //   #[derive(StateVariant, EventVariant)]
 //   let fsm = fsm! { ... };
-pub use obzenflow_fsm_macros::{fsm, EventVariant as EventVariantDerive, StateVariant as StateVariantDerive};
+pub use obzenflow_fsm_macros::{
+    fsm, EventVariant as EventVariantDerive, StateVariant as StateVariantDerive,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
 
+    #[allow(dead_code)]
     #[derive(Clone, Debug, PartialEq)]
     enum TestState {
         Idle,
@@ -64,6 +67,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     #[derive(Clone, Debug)]
     enum TestEvent {
         Start,
@@ -80,6 +84,8 @@ mod tests {
             }
         }
     }
+
+    #[allow(dead_code)]
     #[derive(Clone, Debug, PartialEq)]
     enum TestAction {
         Log(String),
@@ -89,21 +95,21 @@ mod tests {
     struct TestContext {
         total: u32,
     }
-    
+
     impl FsmContext for TestContext {
         fn describe(&self) -> String {
             format!("Test context with total: {}", self.total)
         }
     }
-    
+
     #[async_trait]
     impl FsmAction for TestAction {
         type Context = TestContext;
-        
+
         async fn execute(&self, _ctx: &mut Self::Context) -> crate::types::FsmResult<()> {
             match self {
                 TestAction::Log(msg) => {
-                    println!("Log: {}", msg);
+                    println!("Log: {msg}");
                     Ok(())
                 }
                 TestAction::Notify => {
@@ -135,10 +141,16 @@ mod tests {
             }
         };
         let mut ctx = TestContext { total: 0 };
-        
+
         // Test transition
-        let actions = state_machine.handle(TestEvent::Start, &mut ctx).await.unwrap();
+        let actions = state_machine
+            .handle(TestEvent::Start, &mut ctx)
+            .await
+            .unwrap();
         assert_eq!(actions.len(), 1);
-        assert!(matches!(state_machine.state(), TestState::Active { count: 0 }));
+        assert!(matches!(
+            state_machine.state(),
+            TestState::Active { count: 0 }
+        ));
     }
 }

@@ -113,13 +113,13 @@ pub trait FsmContext: Send + Sync + 'static {
 pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
     /// The context type this action operates on
     type Context: FsmContext;
-    
+
     /// Execute this action with the given context
     async fn execute(&self, ctx: &mut Self::Context) -> FsmResult<()>;
-    
+
     /// Get a description of what this action does
     fn describe(&self) -> String {
-        format!("{:?}", self)
+        format!("{self:?}")
     }
 }
 

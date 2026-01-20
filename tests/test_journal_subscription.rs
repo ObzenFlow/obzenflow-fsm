@@ -17,14 +17,17 @@
 //! - Tests Arc<Context> with complex async I/O patterns
 //! - Proves the journal can maintain order even when everyone speaks at once
 
-use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, Transition, FsmContext, FsmAction};
+#![allow(dead_code)]
+#![allow(deprecated)]
+
 use async_trait::async_trait;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use obzenflow_fsm::internal::FsmBuilder;
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
 
 #[tokio::test]
@@ -103,7 +106,10 @@ async fn test_3_journal_subscription_chaos() {
 
     impl FsmContext for BabelContext {
         fn describe(&self) -> String {
-            format!("BabelContext with {} messages", self.message_counter.load(Ordering::Relaxed))
+            format!(
+                "BabelContext with {} messages",
+                self.message_counter.load(Ordering::Relaxed)
+            )
         }
     }
 
@@ -113,11 +119,11 @@ async fn test_3_journal_subscription_chaos() {
 
         async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
-                BabelAction::WriteToJournal(msg) => {
+                BabelAction::WriteToJournal(_msg) => {
                     // Write to journal
                     Ok(())
                 }
-                BabelAction::Subscribe(language) => {
+                BabelAction::Subscribe(_language) => {
                     // Subscribe to language
                     Ok(())
                 }
@@ -146,9 +152,17 @@ async fn test_3_journal_subscription_chaos() {
     };
 
     // === THE BABEL BUILDERS (10 FSMs speaking different languages) ===
-    let languages = vec![
-        "Hebrew", "Greek", "Latin", "Aramaic", "Sanskrit",
-        "Egyptian", "Sumerian", "Akkadian", "Phoenician", "Coptic"
+    let languages = [
+        "Hebrew",
+        "Greek",
+        "Latin",
+        "Aramaic",
+        "Sanskrit",
+        "Egyptian",
+        "Sumerian",
+        "Akkadian",
+        "Phoenician",
+        "Coptic",
     ];
 
     let mut speaker_handles = vec![];
@@ -174,121 +188,125 @@ async fn test_3_journal_subscription_chaos() {
             };
 
             let mut fsm = FsmBuilder::<BabelState, BabelEvent, BabelContext, BabelAction>::new(
-                BabelState::Speaking { language: lang.clone() }
+                BabelState::Speaking {
+                    language: lang.clone(),
+                },
             )
-                    .when("Speaking")
-                    .on("Speak", move |state, event, ctx: &mut BabelContext| {
-                        let event = event.clone();
-                        let state_clone = state.clone();
-                        let lang = if let BabelState::Speaking { language } = state {
-                            language.clone()
-                        } else {
-                            "Unknown".to_string()
+            .when("Speaking")
+            .on("Speak", move |state, event, ctx: &mut BabelContext| {
+                let event = event.clone();
+                let state_clone = state.clone();
+                let lang = if let BabelState::Speaking { language } = state {
+                    language.clone()
+                } else {
+                    "Unknown".to_string()
+                };
+
+                Box::pin(async move {
+                    if let BabelEvent::Speak { message, .. } = event {
+                        // === WRITING TO THE JOURNAL ===
+                        let msg_id = ctx.message_counter.fetch_add(1, Ordering::SeqCst);
+
+                        // Update vector clock
+                        let mut vector_clocks = ctx.vector_clocks.write().await;
+                        let clock = vector_clocks
+                            .entry(lang.clone())
+                            .or_insert_with(HashMap::new);
+                        *clock.entry(lang.clone()).or_insert(0) += 1;
+                        let current_clock = clock.clone();
+                        drop(vector_clocks);
+
+                        // Create journal entry
+                        let entry = JournalEntry {
+                            id: msg_id,
+                            timestamp: std::time::Instant::now(),
+                            language: lang.clone(),
+                            message: message.clone(),
+                            vector_clock: current_clock,
                         };
 
-                        Box::pin(async move {
-                            if let BabelEvent::Speak { message, .. } = event {
-                                // === WRITING TO THE JOURNAL ===
-                                let msg_id = ctx.message_counter.fetch_add(1, Ordering::SeqCst);
+                        // === CHAOS INJECTION ===
+                        if ctx.chaos_mode.load(Ordering::Relaxed) && rand::random::<bool>() {
+                            // Sometimes delay writes to create out-of-order entries
+                            sleep(Duration::from_millis(rand::random::<u64>() % 50)).await;
+                        }
 
-                                // Update vector clock
-                                let mut vector_clocks = ctx.vector_clocks.write().await;
-                                let clock = vector_clocks.entry(lang.clone()).or_insert_with(HashMap::new);
-                                *clock.entry(lang.clone()).or_insert(0) += 1;
-                                let current_clock = clock.clone();
-                                drop(vector_clocks);
+                        // Write to journal
+                        ctx.journal.write().await.push(entry.clone());
 
-                                // Create journal entry
-                                let entry = JournalEntry {
-                                    id: msg_id,
-                                    timestamp: std::time::Instant::now(),
-                                    language: lang.clone(),
-                                    message: message.clone(),
-                                    vector_clock: current_clock,
-                                };
-
-                                // === CHAOS INJECTION ===
-                                if ctx.chaos_mode.load(Ordering::Relaxed) && rand::random::<bool>() {
-                                    // Sometimes delay writes to create out-of-order entries
-                                    sleep(Duration::from_millis(rand::random::<u64>() % 50)).await;
-                                }
-
-                                // Write to journal
-                                ctx.journal.write().await.push(entry.clone());
-
-                                // === NOTIFY SUBSCRIBERS ===
-                                let subscribers = ctx.subscribers.read().await;
-                                for (filter, tx) in subscribers.iter() {
-                                    if filter == "*" || filter == &lang || message.contains(filter) {
-                                        // Try to send, but don't block if channel is full
-                                        if let Err(_) = tx.try_send(entry.clone()) {
-                                            ctx.dropped_messages.fetch_add(1, Ordering::Relaxed);
-                                        }
-                                    }
-                                }
-
-                                Ok(Transition {
-                                    next_state: BabelState::Speaking { language: lang },
-                                    actions: vec![BabelAction::WriteToJournal(message)],
-                                })
-                            } else {
-                                Ok(Transition {
-                                    next_state: state_clone,
-                                    actions: vec![],
-                                })
-                            }
-                        })
-                    })
-                    .on("Overflow", move |_state, _event, ctx: &mut BabelContext| {
-                        // === THE FLOOD OF MESSAGES ===
-                        ctx.chaos_mode.store(true, Ordering::Relaxed);
-                        Box::pin(async move {
-                            Ok(Transition {
-                                next_state: BabelState::Confused,
-                                actions: vec![BabelAction::DropMessages],
-                            })
-                        })
-                    })
-                    .done()
-                .when("Confused")
-                    .on("Speak", move |state, event, ctx: &mut BabelContext| {
-                        let event = event.clone();
-                        let state_clone = state.clone();
-                        Box::pin(async move {
-                            if let BabelEvent::Speak { message, .. } = event {
-                                // === CONFUSED SPEECH - RANDOMLY DROP MESSAGES ===
-                                if rand::random::<bool>() {
+                        // === NOTIFY SUBSCRIBERS ===
+                        let subscribers = ctx.subscribers.read().await;
+                        for (filter, tx) in subscribers.iter() {
+                            if filter == "*" || filter == &lang || message.contains(filter) {
+                                // Try to send, but don't block if channel is full
+                                if tx.try_send(entry.clone()).is_err() {
                                     ctx.dropped_messages.fetch_add(1, Ordering::Relaxed);
                                 }
-                                Ok(Transition {
-                                    next_state: BabelState::Confused,
-                                    actions: vec![BabelAction::DropMessages],
-                                })
-                            } else {
-                                Ok(Transition {
-                                    next_state: state_clone,
-                                    actions: vec![],
-                                })
                             }
+                        }
+
+                        Ok(Transition {
+                            next_state: BabelState::Speaking { language: lang },
+                            actions: vec![BabelAction::WriteToJournal(message)],
                         })
-                    })
-                    .on("Silence", move |_state, _event, _ctx: &mut BabelContext| {
-                        // === GOD SILENCES THE BUILDERS ===
-                        Box::pin(async move {
-                            Ok(Transition {
-                                next_state: BabelState::Silenced,
-                                actions: vec![],
-                            })
+                    } else {
+                        Ok(Transition {
+                            next_state: state_clone,
+                            actions: vec![],
                         })
+                    }
+                })
+            })
+            .on("Overflow", move |_state, _event, ctx: &mut BabelContext| {
+                // === THE FLOOD OF MESSAGES ===
+                ctx.chaos_mode.store(true, Ordering::Relaxed);
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: BabelState::Confused,
+                        actions: vec![BabelAction::DropMessages],
                     })
-                    .done()
-                .when("Silenced")
-                    .done()
-                .build();
+                })
+            })
+            .done()
+            .when("Confused")
+            .on("Speak", move |state, event, ctx: &mut BabelContext| {
+                let event = event.clone();
+                let state_clone = state.clone();
+                Box::pin(async move {
+                    if let BabelEvent::Speak { .. } = event {
+                        // === CONFUSED SPEECH - RANDOMLY DROP MESSAGES ===
+                        if rand::random::<bool>() {
+                            ctx.dropped_messages.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Ok(Transition {
+                            next_state: BabelState::Confused,
+                            actions: vec![BabelAction::DropMessages],
+                        })
+                    } else {
+                        Ok(Transition {
+                            next_state: state_clone,
+                            actions: vec![],
+                        })
+                    }
+                })
+            })
+            .on("Silence", move |_state, _event, _ctx: &mut BabelContext| {
+                // === GOD SILENCES THE BUILDERS ===
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: BabelState::Silenced,
+                        actions: vec![],
+                    })
+                })
+            })
+            .done()
+            .when("Silenced")
+            .done()
+            .build();
 
             // === EACH BUILDER SPEAKS THEIR TRUTH ===
             for j in 0..100 {
-                let message = format!("Builder {} speaks message {} in {}", i, j, lang);
+                let message = format!("Builder {i} speaks message {j} in {lang}");
                 fsm.handle(
                     BabelEvent::Speak {
                         message,
@@ -330,10 +348,7 @@ async fn test_3_journal_subscription_chaos() {
             let (tx, mut rx) = mpsc::channel(100); // Limited capacity!
 
             // Register subscriber
-            subscribers
-                .write()
-                .await
-                .insert(filter_str.clone(), tx);
+            subscribers.write().await.insert(filter_str.clone(), tx);
 
             let mut received_count = 0;
             let mut last_vector_clock: HashMap<String, usize> = HashMap::new();
@@ -361,12 +376,14 @@ async fn test_3_journal_subscription_chaos() {
     }
 
     // === WAIT FOR THE TOWER TO FALL ===
-    let speakers: Vec<_> = futures::future::join_all(speaker_handles).await
+    let speakers: Vec<_> = futures::future::join_all(speaker_handles)
+        .await
         .into_iter()
         .map(|r| r.unwrap())
         .collect();
 
-    let listeners: Vec<_> = futures::future::join_all(listener_handles).await
+    let listeners: Vec<_> = futures::future::join_all(listener_handles)
+        .await
         .into_iter()
         .map(|r| r.unwrap())
         .collect();
@@ -374,20 +391,22 @@ async fn test_3_journal_subscription_chaos() {
     // === DIVINE JUDGMENT ===
     // Verify all speakers reached Silenced state
     for fsm in &speakers {
-        assert!(matches!(fsm.state(), BabelState::Silenced),
-            "Builder failed to be silenced by God!");
+        assert!(
+            matches!(fsm.state(), BabelState::Silenced),
+            "Builder failed to be silenced by God!"
+        );
     }
 
     // Check the journal integrity
     let journal = ctx.journal.read().await;
     let total_messages = journal.len();
-    println!("📜 Total messages written to journal: {}", total_messages);
+    println!("📜 Total messages written to journal: {total_messages}");
 
     // Verify vector clock consistency
     let mut has_causal_violations = false;
     for i in 1..journal.len() {
         for (lang, &time) in &journal[i].vector_clock {
-            if let Some(&prev_time) = journal[i-1].vector_clock.get(lang) {
+            if let Some(&prev_time) = journal[i - 1].vector_clock.get(lang) {
                 if time < prev_time && journal[i].language == *lang {
                     has_causal_violations = true;
                 }
@@ -402,15 +421,16 @@ async fn test_3_journal_subscription_chaos() {
 
     // Check subscriber results
     for (filter, count, out_of_order) in listeners {
-        println!("👂 Listener '{}' received {} messages ({} out of order)",
-            filter, count, out_of_order);
+        println!("👂 Listener '{filter}' received {count} messages ({out_of_order} out of order)");
 
         // The "*" listener should receive most messages (minus dropped ones)
         if filter == "*" {
             let dropped = ctx.dropped_messages.load(Ordering::Relaxed);
-            println!("💀 Dropped messages due to overflow: {}", dropped);
-            assert!(count + dropped >= total_messages * 80 / 100,
-                "Universal listener missed too many messages!");
+            println!("💀 Dropped messages due to overflow: {dropped}");
+            assert!(
+                count + dropped >= total_messages * 80 / 100,
+                "Universal listener missed too many messages!"
+            );
         }
     }
 

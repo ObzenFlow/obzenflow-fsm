@@ -1,7 +1,9 @@
 //! Simple tests that demonstrate core FSM functionality
 
+#![allow(deprecated)]
+
 use obzenflow_fsm::internal::FsmBuilder;
-use obzenflow_fsm::{StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -64,7 +66,7 @@ impl FsmAction for SimpleAction {
     async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
         match self {
             SimpleAction::Log(msg) => {
-                ctx.log.write().await.push(format!("Action: {}", msg));
+                ctx.log.write().await.push(format!("Action: {msg}"));
                 Ok(())
             }
             SimpleAction::Notify => {
@@ -77,7 +79,7 @@ impl FsmAction for SimpleAction {
 
 #[tokio::test]
 async fn test_simple_transitions() {
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
+    let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
         .on("Start", |_state, _event, ctx: &mut SimpleContext| {
             Box::pin(async move {
@@ -99,7 +101,7 @@ async fn test_simple_transitions() {
                 ctx.log
                     .write()
                     .await
-                    .push(format!("Progress: {}%", progress));
+                    .push(format!("Progress: {progress}%"));
 
                 if progress >= 100 {
                     Ok(Transition {
@@ -132,12 +134,12 @@ async fn test_simple_transitions() {
     };
 
     // Start work
-    let actions = machine
-        .handle(SimpleEvent::Start, &mut ctx)
-        .await
-        .unwrap();
+    let actions = machine.handle(SimpleEvent::Start, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1);
-    assert!(matches!(machine.state(), SimpleState::Working { progress: 0 }));
+    assert!(matches!(
+        machine.state(),
+        SimpleState::Working { progress: 0 }
+    ));
 
     // Make progress
     for expected in (10..=100).step_by(10) {
@@ -166,44 +168,44 @@ async fn test_simple_transitions() {
 
 #[tokio::test]
 async fn test_entry_exit_handlers() {
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
+    let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
-        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
-            Box::pin(async move {
-                Ok(Transition {
-                    next_state: SimpleState::Working { progress: 0 },
-                    actions: vec![],
+        .on(
+            "Start",
+            |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: SimpleState::Working { progress: 0 },
+                        actions: vec![],
+                    })
                 })
-            })
-        })
+            },
+        )
         .done()
         .on_entry("Working", |_state, ctx: &mut SimpleContext| {
             Box::pin(async move {
-                ctx.log
-                    .write()
-                    .await
-                    .push("Entered Working".to_string());
+                ctx.log.write().await.push("Entered Working".to_string());
                 Ok(vec![SimpleAction::Log("Entry".to_string())])
             })
         })
         .on_exit("Working", |_state, ctx: &mut SimpleContext| {
             Box::pin(async move {
-                ctx.log
-                    .write()
-                    .await
-                    .push("Exited Working".to_string());
+                ctx.log.write().await.push("Exited Working".to_string());
                 Ok(vec![SimpleAction::Log("Exit".to_string())])
             })
         })
         .when("Working")
-        .on("Finish", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
-            Box::pin(async move {
-                Ok(Transition {
-                    next_state: SimpleState::Done,
-                    actions: vec![],
+        .on(
+            "Finish",
+            |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: SimpleState::Done,
+                        actions: vec![],
+                    })
                 })
-            })
-        })
+            },
+        )
         .done()
         .build();
 
@@ -213,10 +215,7 @@ async fn test_entry_exit_handlers() {
     };
 
     // Transition to Working (triggers entry)
-    let actions = machine
-        .handle(SimpleEvent::Start, &mut ctx)
-        .await
-        .unwrap();
+    let actions = machine.handle(SimpleEvent::Start, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1); // Entry action
 
     let log = ctx.log.read().await;
@@ -224,10 +223,7 @@ async fn test_entry_exit_handlers() {
     drop(log); // Release the read lock
 
     // Transition to Done (triggers exit)
-    let actions = machine
-        .handle(SimpleEvent::Finish, &mut ctx)
-        .await
-        .unwrap();
+    let actions = machine.handle(SimpleEvent::Finish, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 1); // Exit action
 
     let log = ctx.log.read().await;
@@ -238,16 +234,19 @@ async fn test_entry_exit_handlers() {
 async fn test_timeout() {
     use tokio::time::sleep;
 
-    let fsm = obzenflow_fsm::internal::FsmBuilder::new(SimpleState::Idle)
+    let fsm = FsmBuilder::new(SimpleState::Idle)
         .when("Idle")
-        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
-            Box::pin(async move {
-                Ok(Transition {
-                    next_state: SimpleState::Working { progress: 0 },
-                    actions: vec![],
+        .on(
+            "Start",
+            |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: SimpleState::Working { progress: 0 },
+                        actions: vec![],
+                    })
                 })
-            })
-        })
+            },
+        )
         .done()
         .when("Working")
         .timeout(
@@ -270,10 +269,7 @@ async fn test_timeout() {
     };
 
     // Start work
-    machine
-        .handle(SimpleEvent::Start, &mut ctx)
-        .await
-        .unwrap();
+    machine.handle(SimpleEvent::Start, &mut ctx).await.unwrap();
     assert!(matches!(machine.state(), SimpleState::Working { .. }));
 
     // Wait for timeout
@@ -287,29 +283,37 @@ async fn test_timeout() {
 
 #[tokio::test]
 async fn test_unhandled_events() {
-    let fsm = obzenflow_fsm::internal::FsmBuilder::<SimpleState, SimpleEvent, SimpleContext, SimpleAction>::new(SimpleState::Idle)
-        .when("Idle")
-        .on("Start", |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+    let fsm = FsmBuilder::<
+        SimpleState,
+        SimpleEvent,
+        SimpleContext,
+        SimpleAction,
+    >::new(SimpleState::Idle)
+    .when("Idle")
+    .on(
+        "Start",
+        |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
             Box::pin(async move {
                 Ok(Transition {
                     next_state: SimpleState::Working { progress: 0 },
                     actions: vec![],
                 })
             })
+        },
+    )
+    .done()
+    .when_unhandled(|state, event, ctx: &mut SimpleContext| {
+        let state_name = state.variant_name().to_string();
+        let event_name = event.variant_name().to_string();
+        Box::pin(async move {
+            ctx.log
+                .write()
+                .await
+                .push(format!("Unhandled {event_name:?} in {state_name:?}"));
+            Ok(())
         })
-        .done()
-        .when_unhandled(|state, event, ctx: &mut SimpleContext| {
-            let state_name = state.variant_name().to_string();
-            let event_name = event.variant_name().to_string();
-            Box::pin(async move {
-                ctx.log.write().await.push(format!(
-                    "Unhandled {:?} in {:?}",
-                    event_name, state_name
-                ));
-                Ok(())
-            })
-        })
-        .build();
+    })
+    .build();
 
     let mut machine = fsm;
     let mut ctx = SimpleContext {
@@ -317,10 +321,7 @@ async fn test_unhandled_events() {
     };
 
     // Send unhandled event
-    let actions = machine
-        .handle(SimpleEvent::Finish, &mut ctx)
-        .await
-        .unwrap();
+    let actions = machine.handle(SimpleEvent::Finish, &mut ctx).await.unwrap();
     assert_eq!(actions.len(), 0);
 
     let log = ctx.log.read().await;

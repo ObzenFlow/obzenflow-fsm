@@ -29,4 +29,3 @@ pub enum FsmError {
     #[error("Builder error: {0}")]
     BuilderError(String),
 }
-

@@ -6,20 +6,27 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 use tracing::debug;
 
-use crate::handlers::{TransitionHandler, StateHandler, TimeoutHandler};
-use crate::types::{FsmAction, FsmContext, FsmResult, StateVariant, EventVariant, Transition};
 use crate::error::FsmError;
+use crate::handlers::{StateHandler, TimeoutHandler, TransitionHandler};
+use crate::types::{EventVariant, FsmAction, FsmContext, FsmResult, StateVariant, Transition};
+
+type TransitionMap<S, E, C, A> = HashMap<(String, String), TransitionHandler<S, E, C, A>>;
+type StateHandlerMap<S, C, A> = HashMap<String, StateHandler<S, C, A>>;
+type TimeoutHandlerMap<S, C, A> = HashMap<String, (Duration, TimeoutHandler<S, C, A>)>;
+type UnhandledHandler<S, E, C> = Arc<
+    dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> crate::types::BoxFuture<'a, FsmResult<()>>
+        + Send
+        + Sync,
+>;
 
 /// The concrete FSM implementation
 pub struct StateMachine<S, E, C, A> {
     current_state: S,
-    transitions: Arc<HashMap<(String, String), TransitionHandler<S, E, C, A>>>,
-    entry_handlers: Arc<HashMap<String, StateHandler<S, C, A>>>,
-    exit_handlers: Arc<HashMap<String, StateHandler<S, C, A>>>,
-    timeout_handlers: Arc<HashMap<String, (Duration, TimeoutHandler<S, C, A>)>>,
-    unhandled_handler: Option<
-        Arc<dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> crate::types::BoxFuture<'a, FsmResult<()>> + Send + Sync>,
-    >,
+    transitions: Arc<TransitionMap<S, E, C, A>>,
+    entry_handlers: Arc<StateHandlerMap<S, C, A>>,
+    exit_handlers: Arc<StateHandlerMap<S, C, A>>,
+    timeout_handlers: Arc<TimeoutHandlerMap<S, C, A>>,
+    unhandled_handler: Option<UnhandledHandler<S, E, C>>,
     state_timeout: Option<Instant>,
     _phantom: PhantomData<(E, C, A)>,
 }
@@ -35,13 +42,11 @@ where
     /// This method is intentionally pub(crate) to enforce builder-only construction
     pub(crate) fn new(
         initial_state: S,
-        transitions: HashMap<(String, String), TransitionHandler<S, E, C, A>>,
-        entry_handlers: HashMap<String, StateHandler<S, C, A>>,
-        exit_handlers: HashMap<String, StateHandler<S, C, A>>,
-        timeout_handlers: HashMap<String, (Duration, TimeoutHandler<S, C, A>)>,
-        unhandled_handler: Option<
-            Arc<dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> crate::types::BoxFuture<'a, FsmResult<()>> + Send + Sync>,
-        >,
+        transitions: TransitionMap<S, E, C, A>,
+        entry_handlers: StateHandlerMap<S, C, A>,
+        exit_handlers: StateHandlerMap<S, C, A>,
+        timeout_handlers: TimeoutHandlerMap<S, C, A>,
+        unhandled_handler: Option<UnhandledHandler<S, E, C>>,
     ) -> Self {
         let mut machine = Self {
             current_state: initial_state,
@@ -105,7 +110,10 @@ where
                     handler(&self.current_state, &event, context).await?;
                     Ok(vec![])
                 } else {
-                    Err(FsmError::UnhandledEvent { state: state_name, event: event_name })
+                    Err(FsmError::UnhandledEvent {
+                        state: state_name,
+                        event: event_name,
+                    })
                 }
             }
         }
@@ -147,20 +155,19 @@ where
             self.state_timeout = None;
         }
 
-        debug!("FSM transitioned from {} to {}", old_state_name, new_state_name);
+        debug!(
+            "FSM transitioned from {} to {}",
+            old_state_name, new_state_name
+        );
 
         // Add transition actions
         all_actions.extend(transition.actions);
 
         Ok(all_actions)
     }
-    
+
     /// Execute a list of actions with the given context
-    pub async fn execute_actions(
-        &self,
-        actions: Vec<A>,
-        context: &mut C,
-    ) -> FsmResult<()> {
+    pub async fn execute_actions(&self, actions: Vec<A>, context: &mut C) -> FsmResult<()> {
         for action in actions {
             action.execute(context).await?;
         }

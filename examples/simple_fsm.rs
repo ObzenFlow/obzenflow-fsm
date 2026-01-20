@@ -1,6 +1,6 @@
 //! Simple FSM example using the `fsm!` DSL.
 
-use obzenflow_fsm::{fsm, StateVariant, EventVariant, FsmContext, FsmAction, Transition};
+use obzenflow_fsm::{fsm, EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -105,12 +105,12 @@ async fn main() {
 
     // Open the door
     let actions = door.handle(DoorEvent::Open, &mut ctx).await.unwrap();
-    println!("Actions: {:?}", actions);
+    println!("Actions: {actions:?}");
     println!("State: {:?}", door.state());
 
     // Close the door
     let actions = door.handle(DoorEvent::Close, &mut ctx).await.unwrap();
-    println!("Actions: {:?}", actions);
+    println!("Actions: {actions:?}");
     println!("State: {:?}", door.state());
 
     // Print log
