@@ -12,9 +12,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::time::Duration;
 
-type UnhandledHandler<S, E, C> = Arc<
-    dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync,
->;
+type UnhandledHandler<S, E, C> =
+    Arc<dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync>;
 
 /// Main builder for creating FSMs.
 ///

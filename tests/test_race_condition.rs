@@ -157,14 +157,14 @@ async fn test_race_condition_from_hell() {
             let mut fsm = FsmBuilder::new(RaceState::Idle)
                 .when("Idle")
                 .on("Start", move |_state, _event, ctx: &mut RaceContext| {
-	                    Box::pin(async move {
-	                        // Initialize metrics entry with complex locking
-	                        let mut metrics = ctx.metrics.write().await;
-	                        metrics.insert(format!("fsm_{i}"), Arc::new(AtomicU64::new(0)));
-	                        Ok(Transition {
-	                            next_state: RaceState::Racing { counter: 0 },
-	                            actions: vec![RaceAction::StartTracking],
-	                        })
+                    Box::pin(async move {
+                        // Initialize metrics entry with complex locking
+                        let mut metrics = ctx.metrics.write().await;
+                        metrics.insert(format!("fsm_{i}"), Arc::new(AtomicU64::new(0)));
+                        Ok(Transition {
+                            next_state: RaceState::Racing { counter: 0 },
+                            actions: vec![RaceAction::StartTracking],
+                        })
                     })
                 })
                 .done()
@@ -178,12 +178,12 @@ async fn test_race_condition_from_hell() {
                         // Simulate in-flight increment with potential underflow protection
                         let _old = ctx.in_flight.fetch_add(1, Ordering::SeqCst);
 
-	                        // Complex nested locking pattern
-	                        let metrics = ctx.metrics.read().await;
-	                        if let Some(counter_metric) = metrics.get(&format!("fsm_{i}")) {
-	                            counter_metric.fetch_add(1, Ordering::Relaxed);
-	                        }
-	                        drop(metrics);
+                        // Complex nested locking pattern
+                        let metrics = ctx.metrics.read().await;
+                        if let Some(counter_metric) = metrics.get(&format!("fsm_{i}")) {
+                            counter_metric.fetch_add(1, Ordering::Relaxed);
+                        }
+                        drop(metrics);
 
                         Ok(Transition {
                             next_state: RaceState::Racing { counter },
@@ -302,25 +302,25 @@ async fn test_race_condition_from_hell() {
         .collect();
 
     // === VERIFY ALL DEMONS REACHED HELL (Done state) ===
-	    for (i, fsm) in fsms.iter().enumerate() {
-	        assert!(
-	            matches!(fsm.state(), RaceState::Done),
-	            "Demon {i} failed to reach Done state - still in {:?}!",
-	            fsm.state()
-	        );
-	    }
+    for (i, fsm) in fsms.iter().enumerate() {
+        assert!(
+            matches!(fsm.state(), RaceState::Done),
+            "Demon {i} failed to reach Done state - still in {:?}!",
+            fsm.state()
+        );
+    }
 
     // === THE DIVINE BALANCE CHECK ===
     // God's atomic counter must return to zero - perfect balance, as all things should be
-	    let final_count = ctx.in_flight.load(Ordering::SeqCst);
-	    if final_count != 0 {
-	        eprintln!(
+    let final_count = ctx.in_flight.load(Ordering::SeqCst);
+    if final_count != 0 {
+        eprintln!(
 	            "⚠️  DIVINE WARNING: in_flight counter is {final_count}, not 0. Some demons are still loose!"
 	        );
-	        // Even God is merciful - we allow small imbalances due to random chaos
-	        assert!(
-	            final_count < 100,
-	            "🔥 CATASTROPHIC FAILURE: {final_count} demons remain uncounted!"
-	        );
-	    }
+        // Even God is merciful - we allow small imbalances due to random chaos
+        assert!(
+            final_count < 100,
+            "🔥 CATASTROPHIC FAILURE: {final_count} demons remain uncounted!"
+        );
+    }
 }

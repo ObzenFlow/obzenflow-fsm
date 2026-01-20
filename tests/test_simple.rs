@@ -98,10 +98,7 @@ async fn test_simple_transitions() {
                 _ => unreachable!(),
             };
             Box::pin(async move {
-                ctx.log
-                    .write()
-                    .await
-                    .push(format!("Progress: {progress}%"));
+                ctx.log.write().await.push(format!("Progress: {progress}%"));
 
                 if progress >= 100 {
                     Ok(Transition {
@@ -283,37 +280,33 @@ async fn test_timeout() {
 
 #[tokio::test]
 async fn test_unhandled_events() {
-    let fsm = FsmBuilder::<
-        SimpleState,
-        SimpleEvent,
-        SimpleContext,
-        SimpleAction,
-    >::new(SimpleState::Idle)
-    .when("Idle")
-    .on(
-        "Start",
-        |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
-            Box::pin(async move {
-                Ok(Transition {
-                    next_state: SimpleState::Working { progress: 0 },
-                    actions: vec![],
+    let fsm =
+        FsmBuilder::<SimpleState, SimpleEvent, SimpleContext, SimpleAction>::new(SimpleState::Idle)
+            .when("Idle")
+            .on(
+                "Start",
+                |_state, _event: &SimpleEvent, _ctx: &mut SimpleContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: SimpleState::Working { progress: 0 },
+                            actions: vec![],
+                        })
+                    })
+                },
+            )
+            .done()
+            .when_unhandled(|state, event, ctx: &mut SimpleContext| {
+                let state_name = state.variant_name().to_string();
+                let event_name = event.variant_name().to_string();
+                Box::pin(async move {
+                    ctx.log
+                        .write()
+                        .await
+                        .push(format!("Unhandled {event_name:?} in {state_name:?}"));
+                    Ok(())
                 })
             })
-        },
-    )
-    .done()
-    .when_unhandled(|state, event, ctx: &mut SimpleContext| {
-        let state_name = state.variant_name().to_string();
-        let event_name = event.variant_name().to_string();
-        Box::pin(async move {
-            ctx.log
-                .write()
-                .await
-                .push(format!("Unhandled {event_name:?} in {state_name:?}"));
-            Ok(())
-        })
-    })
-    .build();
+            .build();
 
     let mut machine = fsm;
     let mut ctx = SimpleContext {

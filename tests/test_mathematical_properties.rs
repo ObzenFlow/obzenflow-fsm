@@ -375,16 +375,13 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
     };
 
     // Create another FSM and process in reverse order
-    let mut machine2 = FsmBuilder::<
-        BeastState,
-        BeastEvent,
-        BeastContext,
-        BeastAction,
-    >::new(BeastState::Counting {
-        balance: 0,
-        operations: vec![],
-        operation_ids: std::collections::HashSet::new(),
-    })
+    let mut machine2 = FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(
+        BeastState::Counting {
+            balance: 0,
+            operations: vec![],
+            operation_ids: std::collections::HashSet::new(),
+        },
+    )
     .when("Counting")
     .on(
         "Append",

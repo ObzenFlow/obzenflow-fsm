@@ -230,139 +230,137 @@ async fn test_2_async_coordination_nightmare() {
     let pipeline_handle = tokio::spawn(async move {
         let mut ctx = pipeline_ctx;
 
-        let mut fsm = FsmBuilder::<
-            PipelineState,
-            PipelineEvent,
-            CoordinationContext,
-            CoordAction,
-        >::new(PipelineState::Initializing)
-        .when("Initializing")
-        .on(
-            "Start",
-            move |_state, _event, ctx: &mut CoordinationContext| {
-                Box::pin(async move {
-                    ctx.event_log
-                        .write()
-                        .await
-                        .push("Pipeline: Starting".to_string());
-                    Ok(Transition {
-                        next_state: PipelineState::WaitingForStages,
-                        actions: vec![],
+        let mut fsm =
+            FsmBuilder::<PipelineState, PipelineEvent, CoordinationContext, CoordAction>::new(
+                PipelineState::Initializing,
+            )
+            .when("Initializing")
+            .on(
+                "Start",
+                move |_state, _event, ctx: &mut CoordinationContext| {
+                    Box::pin(async move {
+                        ctx.event_log
+                            .write()
+                            .await
+                            .push("Pipeline: Starting".to_string());
+                        Ok(Transition {
+                            next_state: PipelineState::WaitingForStages,
+                            actions: vec![],
+                        })
                     })
-                })
-            },
-        )
-        .done()
-        .when("WaitingForStages")
-        .on(
-            "StageReady",
-            move |_state, event, ctx: &mut CoordinationContext| {
-                let event = event.clone();
-                Box::pin(async move {
-                    if let PipelineEvent::StageReady { stage_id } = event {
-                        ctx.ready_stages.write().await.insert(stage_id);
+                },
+            )
+            .done()
+            .when("WaitingForStages")
+            .on(
+                "StageReady",
+                move |_state, event, ctx: &mut CoordinationContext| {
+                    let event = event.clone();
+                    Box::pin(async move {
+                        if let PipelineEvent::StageReady { stage_id } = event {
+                            ctx.ready_stages.write().await.insert(stage_id);
                             ctx.event_log
                                 .write()
                                 .await
                                 .push(format!("Pipeline: Stage {stage_id} ready"));
 
-                        if ctx.ready_stages.read().await.len() == 5 {
-                            // All stages ready, notify via event
-                            let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesReady).await;
+                            if ctx.ready_stages.read().await.len() == 5 {
+                                // All stages ready, notify via event
+                                let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesReady).await;
+                            }
                         }
-                    }
-                    Ok(Transition {
-                        next_state: PipelineState::WaitingForStages,
-                        actions: vec![],
+                        Ok(Transition {
+                            next_state: PipelineState::WaitingForStages,
+                            actions: vec![],
+                        })
                     })
-                })
-            },
-        )
-        .on(
-            "AllStagesReady",
-            move |_state, _event, ctx: &mut CoordinationContext| {
-                Box::pin(async move {
-                    ctx.event_log
-                        .write()
-                        .await
-                        .push("Pipeline: All stages ready, starting".to_string());
+                },
+            )
+            .on(
+                "AllStagesReady",
+                move |_state, _event, ctx: &mut CoordinationContext| {
+                    Box::pin(async move {
+                        ctx.event_log
+                            .write()
+                            .await
+                            .push("Pipeline: All stages ready, starting".to_string());
 
-                    // Signal all stages to start
-                    let stage_txs = ctx.stage_txs.read().await;
-                    for (_, tx) in stage_txs.iter() {
-                        let _ = tx.send(StageEvent::StartProcessing).await;
-                    }
+                        // Signal all stages to start
+                        let stage_txs = ctx.stage_txs.read().await;
+                        for (_, tx) in stage_txs.iter() {
+                            let _ = tx.send(StageEvent::StartProcessing).await;
+                        }
 
-                    Ok(Transition {
-                        next_state: PipelineState::Running,
-                        actions: vec![CoordAction::WaitAtBarrier],
+                        Ok(Transition {
+                            next_state: PipelineState::Running,
+                            actions: vec![CoordAction::WaitAtBarrier],
+                        })
                     })
-                })
-            },
-        )
-        .done()
-        .when("Running")
-        .on(
-            "BeginShutdown",
-            move |_state, _event, ctx: &mut CoordinationContext| {
-                Box::pin(async move {
-                    ctx.event_log
-                        .write()
-                        .await
-                        .push("Pipeline: Beginning shutdown".to_string());
+                },
+            )
+            .done()
+            .when("Running")
+            .on(
+                "BeginShutdown",
+                move |_state, _event, ctx: &mut CoordinationContext| {
+                    Box::pin(async move {
+                        ctx.event_log
+                            .write()
+                            .await
+                            .push("Pipeline: Beginning shutdown".to_string());
 
-                    // Broadcast shutdown to all stages
-                    let _ = ctx.shutdown_tx.send(());
+                        // Broadcast shutdown to all stages
+                        let _ = ctx.shutdown_tx.send(());
 
-                    Ok(Transition {
-                        next_state: PipelineState::Draining,
-                        actions: vec![CoordAction::BroadcastShutdown],
+                        Ok(Transition {
+                            next_state: PipelineState::Draining,
+                            actions: vec![CoordAction::BroadcastShutdown],
+                        })
                     })
-                })
-            },
-        )
-        .done()
-        .when("Draining")
-        .on(
-            "StageDrained",
-            move |_state, event, ctx: &mut CoordinationContext| {
-                let event = event.clone();
-                Box::pin(async move {
-                    if let PipelineEvent::StageDrained { stage_id } = event {
-                        ctx.drained_stages.write().await.insert(stage_id);
+                },
+            )
+            .done()
+            .when("Draining")
+            .on(
+                "StageDrained",
+                move |_state, event, ctx: &mut CoordinationContext| {
+                    let event = event.clone();
+                    Box::pin(async move {
+                        if let PipelineEvent::StageDrained { stage_id } = event {
+                            ctx.drained_stages.write().await.insert(stage_id);
                             ctx.event_log
                                 .write()
                                 .await
                                 .push(format!("Pipeline: Stage {stage_id} drained"));
 
-                        if ctx.drained_stages.read().await.len() == 5 {
-                            let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesDrained).await;
+                            if ctx.drained_stages.read().await.len() == 5 {
+                                let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesDrained).await;
+                            }
                         }
-                    }
-                    Ok(Transition {
-                        next_state: PipelineState::Draining,
-                        actions: vec![],
+                        Ok(Transition {
+                            next_state: PipelineState::Draining,
+                            actions: vec![],
+                        })
                     })
-                })
-            },
-        )
-        .on(
-            "AllStagesDrained",
-            move |_state, _event, ctx: &mut CoordinationContext| {
-                Box::pin(async move {
-                    ctx.event_log
-                        .write()
-                        .await
-                        .push("Pipeline: All stages drained".to_string());
-                    Ok(Transition {
-                        next_state: PipelineState::Shutdown,
-                        actions: vec![],
+                },
+            )
+            .on(
+                "AllStagesDrained",
+                move |_state, _event, ctx: &mut CoordinationContext| {
+                    Box::pin(async move {
+                        ctx.event_log
+                            .write()
+                            .await
+                            .push("Pipeline: All stages drained".to_string());
+                        Ok(Transition {
+                            next_state: PipelineState::Shutdown,
+                            actions: vec![],
+                        })
                     })
-                })
-            },
-        )
-        .done()
-        .build();
+                },
+            )
+            .done()
+            .build();
 
         // Pipeline event loop
         while let Some(event) = pipeline_rx.recv().await {
@@ -404,177 +402,175 @@ async fn test_2_async_coordination_nightmare() {
         let handle = tokio::spawn(async move {
             let mut ctx = stage_ctx;
 
-            let mut fsm = FsmBuilder::<
-                StageState,
-                StageEvent,
-                CoordinationContext,
-                CoordAction,
-            >::new(StageState::Uninitialized)
-            .when("Uninitialized")
-            .on(
-                "Initialize",
-                move |_state, _event, ctx: &mut CoordinationContext| {
-                    Box::pin(async move {
-                        ctx.event_log
-                            .write()
-                            .await
-                            .push(format!("Stage {stage_id}: Initializing"));
-
-                        // Simulate materialization delay
-                        sleep(Duration::from_millis(10 + stage_id as u64 * 5)).await;
-
-                        // Schedule auto-completion of materialization
-                        let ctx_clone = CoordinationContext {
-                            startup_barrier: ctx.startup_barrier.clone(),
-                            ready_stages: ctx.ready_stages.clone(),
-                            drained_stages: ctx.drained_stages.clone(),
-                            shutdown_tx: ctx.shutdown_tx.clone(),
-                            pipeline_tx: ctx.pipeline_tx.clone(),
-                            stage_txs: ctx.stage_txs.clone(),
-                            event_log: ctx.event_log.clone(),
-                        };
-                        tokio::spawn(async move {
-                            sleep(Duration::from_millis(20)).await;
-                            let stage_txs = ctx_clone.stage_txs.read().await;
-                            if let Some(tx) = stage_txs.get(&stage_id) {
-                                let _ = tx.send(StageEvent::MaterializationComplete).await;
-                            }
-                        });
-
-                        Ok(Transition {
-                            next_state: StageState::Materializing,
-                            actions: vec![],
-                        })
-                    })
-                },
-            )
-            .done()
-            .when("Materializing")
-            .on(
-                "MaterializationComplete",
-                move |_state, _event, ctx: &mut CoordinationContext| {
-                    Box::pin(async move {
-                        ctx.event_log
-                            .write()
-                            .await
-                            .push(format!("Stage {stage_id}: Materialized"));
-
-                        // Notify pipeline we're ready
-                        let _ = ctx
-                            .pipeline_tx
-                            .send(PipelineEvent::StageReady { stage_id })
-                            .await;
-
-                        Ok(Transition {
-                            next_state: StageState::Materialized,
-                            actions: vec![CoordAction::NotifyPipeline],
-                        })
-                    })
-                },
-            )
-            .done()
-            .when("Materialized")
-            .on(
-                "StartProcessing",
-                move |_state, _event, ctx: &mut CoordinationContext| {
-                    Box::pin(async move {
-                        ctx.event_log
-                            .write()
-                            .await
-                            .push(format!("Stage {stage_id}: Starting processing"));
-
-                        // Wait at barrier for coordinated start
-                        ctx.startup_barrier.wait().await;
-
-                        Ok(Transition {
-                            next_state: StageState::Running,
-                            actions: vec![],
-                        })
-                    })
-                },
-            )
-            .done()
-            .when("Running")
-            .on(
-                "ProcessEvent",
-                move |_state, event, ctx: &mut CoordinationContext| {
-                    let event = event.clone();
-                    Box::pin(async move {
-                        if let StageEvent::ProcessEvent { data } = event {
+            let mut fsm =
+                FsmBuilder::<StageState, StageEvent, CoordinationContext, CoordAction>::new(
+                    StageState::Uninitialized,
+                )
+                .when("Uninitialized")
+                .on(
+                    "Initialize",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
+                        Box::pin(async move {
                             ctx.event_log
                                 .write()
                                 .await
-                                .push(format!("Stage {stage_id}: Processing {data}"));
-                        }
-                        Ok(Transition {
-                            next_state: StageState::Running,
-                            actions: vec![],
+                                .push(format!("Stage {stage_id}: Initializing"));
+
+                            // Simulate materialization delay
+                            sleep(Duration::from_millis(10 + stage_id as u64 * 5)).await;
+
+                            // Schedule auto-completion of materialization
+                            let ctx_clone = CoordinationContext {
+                                startup_barrier: ctx.startup_barrier.clone(),
+                                ready_stages: ctx.ready_stages.clone(),
+                                drained_stages: ctx.drained_stages.clone(),
+                                shutdown_tx: ctx.shutdown_tx.clone(),
+                                pipeline_tx: ctx.pipeline_tx.clone(),
+                                stage_txs: ctx.stage_txs.clone(),
+                                event_log: ctx.event_log.clone(),
+                            };
+                            tokio::spawn(async move {
+                                sleep(Duration::from_millis(20)).await;
+                                let stage_txs = ctx_clone.stage_txs.read().await;
+                                if let Some(tx) = stage_txs.get(&stage_id) {
+                                    let _ = tx.send(StageEvent::MaterializationComplete).await;
+                                }
+                            });
+
+                            Ok(Transition {
+                                next_state: StageState::Materializing,
+                                actions: vec![],
+                            })
                         })
-                    })
-                },
-            )
-            .on(
-                "BeginDrain",
-                move |_state, _event, ctx: &mut CoordinationContext| {
-                    Box::pin(async move {
-                        ctx.event_log
-                            .write()
-                            .await
-                            .push(format!("Stage {stage_id}: Beginning drain"));
+                    },
+                )
+                .done()
+                .when("Materializing")
+                .on(
+                    "MaterializationComplete",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
+                        Box::pin(async move {
+                            ctx.event_log
+                                .write()
+                                .await
+                                .push(format!("Stage {stage_id}: Materialized"));
 
-                        // Simulate drain work
-                        sleep(Duration::from_millis(50 - stage_id as u64 * 5)).await;
+                            // Notify pipeline we're ready
+                            let _ = ctx
+                                .pipeline_tx
+                                .send(PipelineEvent::StageReady { stage_id })
+                                .await;
 
-                        // Schedule auto-completion of drain
-                        let ctx_clone = CoordinationContext {
-                            startup_barrier: ctx.startup_barrier.clone(),
-                            ready_stages: ctx.ready_stages.clone(),
-                            drained_stages: ctx.drained_stages.clone(),
-                            shutdown_tx: ctx.shutdown_tx.clone(),
-                            pipeline_tx: ctx.pipeline_tx.clone(),
-                            stage_txs: ctx.stage_txs.clone(),
-                            event_log: ctx.event_log.clone(),
-                        };
-                        tokio::spawn(async move {
-                            let stage_txs = ctx_clone.stage_txs.read().await;
-                            if let Some(tx) = stage_txs.get(&stage_id) {
-                                let _ = tx.send(StageEvent::DrainComplete).await;
+                            Ok(Transition {
+                                next_state: StageState::Materialized,
+                                actions: vec![CoordAction::NotifyPipeline],
+                            })
+                        })
+                    },
+                )
+                .done()
+                .when("Materialized")
+                .on(
+                    "StartProcessing",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
+                        Box::pin(async move {
+                            ctx.event_log
+                                .write()
+                                .await
+                                .push(format!("Stage {stage_id}: Starting processing"));
+
+                            // Wait at barrier for coordinated start
+                            ctx.startup_barrier.wait().await;
+
+                            Ok(Transition {
+                                next_state: StageState::Running,
+                                actions: vec![],
+                            })
+                        })
+                    },
+                )
+                .done()
+                .when("Running")
+                .on(
+                    "ProcessEvent",
+                    move |_state, event, ctx: &mut CoordinationContext| {
+                        let event = event.clone();
+                        Box::pin(async move {
+                            if let StageEvent::ProcessEvent { data } = event {
+                                ctx.event_log
+                                    .write()
+                                    .await
+                                    .push(format!("Stage {stage_id}: Processing {data}"));
                             }
-                        });
-
-                        Ok(Transition {
-                            next_state: StageState::Draining,
-                            actions: vec![],
+                            Ok(Transition {
+                                next_state: StageState::Running,
+                                actions: vec![],
+                            })
                         })
-                    })
-                },
-            )
-            .done()
-            .when("Draining")
-            .on(
-                "DrainComplete",
-                move |_state, _event, ctx: &mut CoordinationContext| {
-                    Box::pin(async move {
-                        ctx.event_log
-                            .write()
-                            .await
-                            .push(format!("Stage {stage_id}: Drained"));
+                    },
+                )
+                .on(
+                    "BeginDrain",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
+                        Box::pin(async move {
+                            ctx.event_log
+                                .write()
+                                .await
+                                .push(format!("Stage {stage_id}: Beginning drain"));
 
-                        // Notify pipeline we're drained
-                        let _ = ctx
-                            .pipeline_tx
-                            .send(PipelineEvent::StageDrained { stage_id })
-                            .await;
+                            // Simulate drain work
+                            sleep(Duration::from_millis(50 - stage_id as u64 * 5)).await;
 
-                        Ok(Transition {
-                            next_state: StageState::Drained,
-                            actions: vec![],
+                            // Schedule auto-completion of drain
+                            let ctx_clone = CoordinationContext {
+                                startup_barrier: ctx.startup_barrier.clone(),
+                                ready_stages: ctx.ready_stages.clone(),
+                                drained_stages: ctx.drained_stages.clone(),
+                                shutdown_tx: ctx.shutdown_tx.clone(),
+                                pipeline_tx: ctx.pipeline_tx.clone(),
+                                stage_txs: ctx.stage_txs.clone(),
+                                event_log: ctx.event_log.clone(),
+                            };
+                            tokio::spawn(async move {
+                                let stage_txs = ctx_clone.stage_txs.read().await;
+                                if let Some(tx) = stage_txs.get(&stage_id) {
+                                    let _ = tx.send(StageEvent::DrainComplete).await;
+                                }
+                            });
+
+                            Ok(Transition {
+                                next_state: StageState::Draining,
+                                actions: vec![],
+                            })
                         })
-                    })
-                },
-            )
-            .done()
-            .build();
+                    },
+                )
+                .done()
+                .when("Draining")
+                .on(
+                    "DrainComplete",
+                    move |_state, _event, ctx: &mut CoordinationContext| {
+                        Box::pin(async move {
+                            ctx.event_log
+                                .write()
+                                .await
+                                .push(format!("Stage {stage_id}: Drained"));
+
+                            // Notify pipeline we're drained
+                            let _ = ctx
+                                .pipeline_tx
+                                .send(PipelineEvent::StageDrained { stage_id })
+                                .await;
+
+                            Ok(Transition {
+                                next_state: StageState::Drained,
+                                actions: vec![],
+                            })
+                        })
+                    },
+                )
+                .done()
+                .build();
 
             // Stage event loop
             loop {

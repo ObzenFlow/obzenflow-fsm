@@ -83,9 +83,10 @@ async fn test_deeply_nested_state() {
         map
     };
 
-    let fsm = FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(
-        NestedState::Level1 { data: initial_data },
-    )
+    let fsm =
+        FsmBuilder::<NestedState, NestedEvent, EmptyContext, NoAction>::new(NestedState::Level1 {
+            data: initial_data,
+        })
         .when("Level1")
         .on("Transform", |state, _event, _ctx: &mut EmptyContext| {
             let data = match state {
@@ -344,10 +345,7 @@ async fn test_complex_async_handlers() {
                         let service = external_service.clone();
                         tokio::spawn(async move {
                             sleep(Duration::from_millis(10)).await;
-                            service
-                                .write()
-                                .await
-                                .push(format!("Task {i} initialized"));
+                            service.write().await.push(format!("Task {i} initialized"));
                         })
                     })
                     .collect();
@@ -685,9 +683,8 @@ async fn test_many_states() {
         }
     }
 
-    let mut builder = FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(
-        ManyStates::State0,
-    );
+    let mut builder =
+        FsmBuilder::<ManyStates, ManyEvents, EmptyCtx, Transition_>::new(ManyStates::State0);
 
     // Add transitions for each state
     for i in 0..9 {

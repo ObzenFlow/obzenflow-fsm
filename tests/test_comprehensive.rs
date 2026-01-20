@@ -582,7 +582,9 @@ async fn test_invalid_transitions_handled_gracefully() {
                 let event_name = event.variant_name().to_string();
                 Box::pin(async move {
                     ctx.event_log
-                        .send(format!("Invalid transition: {event_name} in state {state_name}"))
+                        .send(format!(
+                            "Invalid transition: {event_name} in state {state_name}"
+                        ))
                         .unwrap();
                     Ok(())
                 })
