@@ -1,4 +1,5 @@
-//! Async-first finite state machine (FSM) library inspired by Akka (Classic) FSM.
+//! Async-first finite state machine (FSM) library inspired by Akka (Classic) FSM and
+//! [`edfsm`](https://docs.rs/edfsm).
 //!
 //! `obzenflow-fsm` implements a small **Mealy-machine** core:
 //! `State(S) × Event(E) → Actions(A), State(S')`.
@@ -10,6 +11,31 @@
 //!
 //! This split makes it easy to build deterministic state evolution while keeping side effects
 //! explicit and auditable (e.g. write-to-journal, publish-to-bus, spawn tasks).
+//!
+//! ## Key Differences vs `edfsm`
+//!
+//! [`edfsm`](https://docs.rs/edfsm) is an event-driven FSM with a `Command`/`Event` split and a
+//! separate effect handler; it's `no_std` and keeps effects synchronous by design.
+//!
+//! `obzenflow-fsm` makes different trade-offs for async supervisor-style runtimes:
+//! - **Async-first**: handlers and actions are async (Tokio-friendly).
+//! - **Explicit effects**: transitions return `Vec<Action>`; effects run only when the host calls
+//!   [`FsmAction::execute`].
+//! - **Single input type**: there is one `Event` type; "commands" can be modeled as event variants.
+//! - **Runtime hooks**: entry/exit handlers and cooperative per-state timeouts are built into
+//!   [`StateMachine`].
+//!
+//! If you're coming from `edfsm`, a rough mapping is:
+//! - `Command`/`Event` inputs → a single `Event` enum (external commands and internal signals as
+//!   variants).
+//! - The effect handler (`SE`) → an `Action` enum executed against your runtime `Context`.
+//!
+//! For replay-style flows, keep transition handlers free of external side effects and execute
+//! actions only in "live" mode.
+//!
+//! If you want a synchronous, event-sourcing-oriented FSM core where `Command -> Event -> State`
+//! is the primary model, `edfsm` is an excellent choice. If you want async actions and an explicit
+//! supervisor/host-loop integration style, this crate is optimized for that.
 //!
 //! ## Quick start
 //!
@@ -56,65 +82,57 @@
 //!     }
 //! }
 //!
-//! fn main() {
-//!     let rt = tokio::runtime::Builder::new_current_thread()
-//!         .enable_time()
-//!         .build()
-//!         .unwrap();
+//! #[tokio::main(flavor = "current_thread")]
+//! async fn main() -> Result<(), obzenflow_fsm::FsmError> {
+//!     let mut door = fsm! {
+//!         state:   DoorState;
+//!         event:   DoorEvent;
+//!         context: DoorContext;
+//!         action:  DoorAction;
+//!         initial: DoorState::Closed;
 //!
-//!     rt.block_on(async {
-//!         let mut door = fsm! {
-//!             state:   DoorState;
-//!             event:   DoorEvent;
-//!             context: DoorContext;
-//!             action:  DoorAction;
-//!             initial: DoorState::Closed;
-//!
-//!             state DoorState::Closed {
-//!                 on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
-//!                     Box::pin(async move {
-//!                         Ok(Transition {
-//!                             next_state: DoorState::Open,
-//!                             actions: vec![
-//!                                 DoorAction::Ring,
-//!                                 DoorAction::Log("Door opened".into()),
-//!                             ],
-//!                         })
+//!         state DoorState::Closed {
+//!             on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+//!                 Box::pin(async move {
+//!                     Ok(Transition {
+//!                         next_state: DoorState::Open,
+//!                         actions: vec![DoorAction::Ring, DoorAction::Log("Door opened".into())],
 //!                     })
-//!                 };
-//!             }
+//!                 })
+//!             };
+//!         }
 //!
-//!             state DoorState::Open {
-//!                 on DoorEvent::Close => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
-//!                     Box::pin(async move {
-//!                         Ok(Transition {
-//!                             next_state: DoorState::Closed,
-//!                             actions: vec![DoorAction::Log("Door closed".into())],
-//!                         })
+//!         state DoorState::Open {
+//!             on DoorEvent::Close => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+//!                 Box::pin(async move {
+//!                     Ok(Transition {
+//!                         next_state: DoorState::Closed,
+//!                         actions: vec![DoorAction::Log("Door closed".into())],
 //!                     })
-//!                 };
-//!             }
-//!         };
+//!                 })
+//!             };
+//!         }
+//!     };
 //!
-//!         let mut ctx = DoorContext::default();
+//!     let mut ctx = DoorContext::default();
 //!
-//!         let actions = door.handle(DoorEvent::Open, &mut ctx).await.unwrap();
-//!         door.execute_actions(actions, &mut ctx).await.unwrap();
-//!         assert_eq!(door.state(), &DoorState::Open);
+//!     let actions = door.handle(DoorEvent::Open, &mut ctx).await?;
+//!     door.execute_actions(actions, &mut ctx).await?;
+//!     assert_eq!(door.state(), &DoorState::Open);
 //!
-//!         let actions = door.handle(DoorEvent::Close, &mut ctx).await.unwrap();
-//!         door.execute_actions(actions, &mut ctx).await.unwrap();
-//!         assert_eq!(door.state(), &DoorState::Closed);
+//!     let actions = door.handle(DoorEvent::Close, &mut ctx).await?;
+//!     door.execute_actions(actions, &mut ctx).await?;
+//!     assert_eq!(door.state(), &DoorState::Closed);
 //!
-//!         assert_eq!(
-//!             ctx.log,
-//!             vec![
-//!                 "Ring!".to_string(),
-//!                 "Door opened".to_string(),
-//!                 "Door closed".to_string()
-//!             ]
-//!         );
-//!     });
+//!     assert_eq!(
+//!         ctx.log,
+//!         vec![
+//!             "Ring!".to_string(),
+//!             "Door opened".to_string(),
+//!             "Door closed".to_string()
+//!         ]
+//!     );
+//!     Ok(())
 //! }
 //! ```
 //!
@@ -225,62 +243,57 @@
 //!     }
 //! }
 //!
-//! fn main() {
-//!     let rt = tokio::runtime::Builder::new_current_thread()
-//!         .enable_time()
-//!         .build()
-//!         .unwrap();
+//! #[tokio::main(flavor = "current_thread")]
+//! async fn main() -> Result<(), obzenflow_fsm::FsmError> {
+//!     let mut door = fsm! {
+//!         state:   DoorState;
+//!         event:   DoorEvent;
+//!         context: DoorContext;
+//!         action:  DoorAction;
+//!         initial: DoorState::Closed;
 //!
-//!     rt.block_on(async {
-//!         let mut door = fsm! {
-//!             state:   DoorState;
-//!             event:   DoorEvent;
-//!             context: DoorContext;
-//!             action:  DoorAction;
-//!             initial: DoorState::Closed;
-//!
-//!             state DoorState::Closed {
-//!                 on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
-//!                     Box::pin(async move {
-//!                         Ok(Transition {
-//!                             next_state: DoorState::Open,
-//!                             actions: vec![DoorAction::Log("Opened".into())],
-//!                         })
+//!         state DoorState::Closed {
+//!             on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+//!                 Box::pin(async move {
+//!                     Ok(Transition {
+//!                         next_state: DoorState::Open,
+//!                         actions: vec![DoorAction::Log("Opened".into())],
 //!                     })
-//!                 };
-//!             }
+//!                 })
+//!             };
+//!         }
 //!
-//!             state DoorState::Open {
-//!                 timeout Duration::from_millis(10) => |_s: &DoorState, _ctx: &mut DoorContext| {
-//!                     Box::pin(async move {
-//!                         Ok(Transition {
-//!                             next_state: DoorState::Closed,
-//!                             actions: vec![DoorAction::Log("Auto-closed".into())],
-//!                         })
+//!         state DoorState::Open {
+//!             timeout Duration::from_millis(10) => |_s: &DoorState, _ctx: &mut DoorContext| {
+//!                 Box::pin(async move {
+//!                     Ok(Transition {
+//!                         next_state: DoorState::Closed,
+//!                         actions: vec![DoorAction::Log("Auto-closed".into())],
 //!                     })
-//!                 };
-//!             }
-//!         };
+//!                 })
+//!             };
+//!         }
+//!     };
 //!
-//!         let mut ctx = DoorContext::default();
+//!     let mut ctx = DoorContext::default();
 //!
-//!         // Closed -> Open
-//!         let actions = door.handle(DoorEvent::Open, &mut ctx).await.unwrap();
-//!         door.execute_actions(actions, &mut ctx).await.unwrap();
-//!         assert_eq!(door.state(), &DoorState::Open);
+//!     // Closed -> Open
+//!     let actions = door.handle(DoorEvent::Open, &mut ctx).await?;
+//!     door.execute_actions(actions, &mut ctx).await?;
+//!     assert_eq!(door.state(), &DoorState::Open);
 //!
-//!         tokio::time::sleep(Duration::from_millis(20)).await;
+//!     tokio::time::sleep(Duration::from_millis(20)).await;
 //!
-//!         // Open -> Closed (timeout)
-//!         let actions = door.check_timeout(&mut ctx).await.unwrap();
-//!         door.execute_actions(actions, &mut ctx).await.unwrap();
-//!         assert_eq!(door.state(), &DoorState::Closed);
+//!     // Open -> Closed (timeout)
+//!     let actions = door.check_timeout(&mut ctx).await?;
+//!     door.execute_actions(actions, &mut ctx).await?;
+//!     assert_eq!(door.state(), &DoorState::Closed);
 //!
-//!         assert_eq!(
-//!             ctx.log,
-//!             vec!["Opened".to_string(), "Auto-closed".to_string()]
-//!         );
-//!     });
+//!     assert_eq!(
+//!         ctx.log,
+//!         vec!["Opened".to_string(), "Auto-closed".to_string()]
+//!     );
+//!     Ok(())
 //! }
 //! ```
 //!
