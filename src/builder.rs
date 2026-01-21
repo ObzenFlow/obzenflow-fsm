@@ -1,4 +1,13 @@
-//! Fluent builder API for creating FSMs (inspired by Akka Classic FSM)
+//! Legacy fluent builder API (string-dispatched).
+//!
+//! Most users should use the typed [`crate::fsm!`] DSL instead.
+//!
+//! This module is retained for two reasons:
+//! 1) Backwards compatibility with older code that used `FsmBuilder` directly.
+//! 2) As an implementation detail of the current `fsm!` macro expansion.
+//!
+//! The builder stores handlers in a map keyed by `(state_name, event_name)` where both names are
+//! provided as strings. The typed DSL derives these strings from enum variant identifiers.
 
 #![allow(deprecated)]
 
@@ -45,7 +54,9 @@ where
     C: FsmContext + 'static,
     A: FsmAction<Context = C> + 'static,
 {
-    /// Create a new FSM builder with an initial state
+    /// Create a new builder with an initial state.
+    ///
+    /// Strict validation is enabled by default; see [`FsmBuilder::strict`] for details.
     pub fn new(initial_state: S) -> Self {
         Self {
             initial_state,
@@ -55,13 +66,9 @@ where
             timeout_handlers: HashMap::new(),
             duplicate_handlers: Vec::new(),
             // FLOWIP-FSM: Strict validation is enabled by default.
-            // This means all FSMs created through FsmBuilder will:
-            // - Reject duplicate (state, event) handlers (always-on),
-            // - Require the initial state to have at least one transition
-            //   or timeout configured.
             //
-            // The `strict()` method remains for readability and tests, but
-            // calling `new()` alone is now equivalent to `new().strict()`.
+            // - Duplicate (state, event) handlers are always rejected.
+            // - The initial state must have at least one transition or timeout configured.
             strict_validation: true,
             unhandled_handler: None,
             _phantom: PhantomData,
@@ -78,10 +85,10 @@ where
         self
     }
 
-    /// Start defining behavior for a specific state
+    /// Start defining behavior for a specific state name.
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL instead of string-based state names. This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL instead of string-based state names. This method will become crate-private in a future release."
     )]
     pub fn when(self, state_name: &str) -> WhenBuilder<S, E, C, A> {
         WhenBuilder {
@@ -90,10 +97,10 @@ where
         }
     }
 
-    /// Define behavior for any state (wildcard)
+    /// Define behavior for any state (wildcard state name `"_"`).
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL and an explicit wildcard state instead of from_any(). This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL instead of from_any(). This method will become crate-private in a future release."
     )]
     pub fn from_any(self) -> WhenBuilder<S, E, C, A> {
         WhenBuilder {
@@ -102,7 +109,10 @@ where
         }
     }
 
-    /// Define handler for unhandled events
+    /// Define a handler for unhandled events.
+    ///
+    /// Unlike normal transitions, this hook is executed immediately inside
+    /// [`crate::StateMachine::handle`] and does not return actions.
     pub fn when_unhandled<F>(mut self, handler: F) -> Self
     where
         F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>>
@@ -114,10 +124,10 @@ where
         self
     }
 
-    /// Define entry handler for a state
+    /// Define an entry handler for a state.
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL with on_entry blocks instead of string-based on_entry(). This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL with on_entry blocks instead of string-based on_entry(). This method will become crate-private in a future release."
     )]
     pub fn on_entry<F>(mut self, state_name: &str, handler: F) -> Self
     where
@@ -128,10 +138,10 @@ where
         self
     }
 
-    /// Define exit handler for a state
+    /// Define an exit handler for a state.
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL with on_exit blocks instead of string-based on_exit(). This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL with on_exit blocks instead of string-based on_exit(). This method will become crate-private in a future release."
     )]
     pub fn on_exit<F>(mut self, state_name: &str, handler: F) -> Self
     where
@@ -153,6 +163,8 @@ where
     }
 
     /// Build the final state machine, returning a `FsmResult`.
+    ///
+    /// This performs validation (including strict-mode checks) and constructs a [`StateMachine`].
     pub fn try_build(self) -> FsmResult<StateMachine<S, E, C, A>> {
         // 1) Duplicate handler validation
         if let Some((state, event)) = self.duplicate_handlers.first() {
@@ -190,7 +202,7 @@ where
     }
 }
 
-/// Builder for defining state-specific behavior
+/// Builder for defining state-specific behavior (legacy builder API).
 pub struct WhenBuilder<S, E, C, A> {
     builder: FsmBuilder<S, E, C, A>,
     state_name: String,
@@ -203,10 +215,10 @@ where
     C: FsmContext + 'static,
     A: FsmAction<Context = C> + 'static,
 {
-    /// Define a transition for a specific event
+    /// Define a transition for a specific event name.
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL with `on Event::Variant => { … }` instead of string-based event names. This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL with `on Event::Variant => { … }` instead of string-based event names. This method will become crate-private in a future release."
     )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
@@ -227,7 +239,7 @@ where
         self
     }
 
-    /// Define a timeout for this state
+    /// Define a timeout for this state.
     pub fn timeout<F>(self, duration: Duration, handler: F) -> TimeoutBuilder<S, E, C, A>
     where
         F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
@@ -252,7 +264,7 @@ where
     }
 }
 
-/// Builder for states with timeouts
+/// Builder for states with timeouts (legacy builder API).
 pub struct TimeoutBuilder<S, E, C, A> {
     builder: FsmBuilder<S, E, C, A>,
     state_name: String,
@@ -265,10 +277,10 @@ where
     C: FsmContext + 'static,
     A: FsmAction<Context = C> + 'static,
 {
-    /// Define a transition for a specific event
+    /// Define a transition for a specific event name.
     #[deprecated(
         since = "0.3.0",
-        note = "Use the typed fsm! DSL with `timeout` blocks instead of string-based event names. This method will become crate-private in obzenflow-fsm 0.3.0."
+        note = "Use the typed fsm! DSL instead of string-based event names. This method will become crate-private in a future release."
     )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
@@ -290,11 +302,13 @@ where
     }
 }
 
-/// Convenience functions for creating transitions
+/// Convenience constructors for [`crate::Transition`].
+///
+/// These are primarily useful when writing handlers outside of the `fsm!` DSL.
 pub mod transitions {
     use crate::Transition;
 
-    /// Transition to a new state
+    /// Transition to a new state (no actions).
     pub fn goto<S, A>(state: S) -> Transition<S, A> {
         Transition {
             next_state: state,
@@ -302,7 +316,7 @@ pub mod transitions {
         }
     }
 
-    /// Transition to a new state with actions
+    /// Transition to a new state with actions.
     pub fn goto_with_actions<S, A>(state: S, actions: Vec<A>) -> Transition<S, A> {
         Transition {
             next_state: state,
@@ -310,7 +324,7 @@ pub mod transitions {
         }
     }
 
-    /// Stay in the current state
+    /// Stay in the current state (no actions).
     pub fn stay<S: Clone, A>(current_state: &S) -> Transition<S, A> {
         Transition {
             next_state: current_state.clone(),
@@ -318,7 +332,7 @@ pub mod transitions {
         }
     }
 
-    /// Stay in the current state with actions
+    /// Stay in the current state with actions.
     pub fn stay_with_actions<S: Clone, A>(current_state: &S, actions: Vec<A>) -> Transition<S, A> {
         Transition {
             next_state: current_state.clone(),

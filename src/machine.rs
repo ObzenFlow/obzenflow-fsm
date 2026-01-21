@@ -1,4 +1,11 @@
-//! StateMachine implementation
+//! The FSM runtime engine.
+//!
+//! [`StateMachine`] owns the current state and the configured transition tables (built via the
+//! `fsm!` DSL). It does **not** own the mutable context; instead, the host loop passes `&mut C`
+//! into [`StateMachine::handle`] and [`StateMachine::check_timeout`].
+//!
+//! The engine never executes actions automatically. It returns a `Vec<A>` so the host can choose
+//! how to run effects (sequentially, with retries, with supervision, etc.).
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -19,7 +26,19 @@ type UnhandledHandler<S, E, C> = Arc<
         + Sync,
 >;
 
-/// The concrete FSM implementation
+/// The concrete finite state machine runtime.
+///
+/// Constructed via the `fsm!` DSL (recommended) or the legacy builder API.
+///
+/// # Action ordering
+///
+/// When a transition occurs, actions are returned in this order:
+/// 1) Exit-handler actions (for the old state), if any.
+/// 2) Entry-handler actions (for the new state), if any.
+/// 3) Transition actions returned by the transition/timeout handler.
+///
+/// Entry/exit hooks are executed even for self-transitions to keep timeout and hook behaviour
+/// consistent.
 pub struct StateMachine<S, E, C, A> {
     current_state: S,
     transitions: Arc<TransitionMap<S, E, C, A>>,
@@ -38,8 +57,10 @@ where
     C: FsmContext,
     A: FsmAction<Context = C>,
 {
-    /// Create a new state machine
-    /// This method is intentionally pub(crate) to enforce builder-only construction
+    /// Create a new state machine.
+    ///
+    /// This method is intentionally `pub(crate)` to enforce construction via `fsm!` (or the
+    /// deprecated builder API).
     pub(crate) fn new(
         initial_state: S,
         transitions: TransitionMap<S, E, C, A>,
@@ -68,12 +89,18 @@ where
         machine
     }
 
-    /// Get the current state
+    /// Returns a reference to the current state.
     pub fn state(&self) -> &S {
         &self.current_state
     }
 
-    /// Check if a timeout has occurred for the current state
+    /// Checks whether the current state's timeout has elapsed.
+    ///
+    /// This is a cooperative API: the host decides how frequently to call it.
+    ///
+    /// Returns:
+    /// - `Ok(vec![])` if no timeout is configured or it has not yet elapsed.
+    /// - A non-empty action list if the timeout handler fired and produced a transition.
     pub async fn check_timeout(&mut self, context: &mut C) -> FsmResult<Vec<A>> {
         if let Some(timeout_instant) = self.state_timeout {
             if Instant::now() >= timeout_instant {
@@ -87,7 +114,14 @@ where
         Ok(vec![])
     }
 
-    /// Handle an event and potentially transition to a new state
+    /// Handles an event and (optionally) transitions to a new state.
+    ///
+    /// Dispatch is performed by `(state.variant_name(), event.variant_name())`.
+    /// If there is no exact match, the engine will also check for a wildcard state (`"_"`) handler
+    /// (used by the legacy builder API). If the event is still unhandled:
+    /// - If a `when_unhandled` hook was configured, it is executed immediately and an empty action
+    ///   list is returned.
+    /// - Otherwise [`FsmError::UnhandledEvent`] is returned.
     pub async fn handle(&mut self, event: E, context: &mut C) -> FsmResult<Vec<A>> {
         let state_name = self.current_state.variant_name().to_string();
         let event_name = event.variant_name().to_string();
@@ -166,7 +200,10 @@ where
         Ok(all_actions)
     }
 
-    /// Execute a list of actions with the given context
+    /// Convenience helper to execute actions sequentially.
+    ///
+    /// Supervisors with more advanced needs (retries, compensation, mapping failures into events)
+    /// will typically execute actions themselves instead of using this helper.
     pub async fn execute_actions(&self, actions: Vec<A>, context: &mut C) -> FsmResult<()> {
         for action in actions {
             action.execute(context).await?;

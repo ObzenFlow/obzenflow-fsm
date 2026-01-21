@@ -1,4 +1,4 @@
-//! Test 1: The Race Condition from Hell 🔥
+//! Test 1: The Race Condition from Hell 😈
 //!
 //! Satan's Attack Vector:
 //! - 10 demon FSMs simultaneously assault the shared atomic counter
@@ -314,13 +314,11 @@ async fn test_race_condition_from_hell() {
     // God's atomic counter must return to zero - perfect balance, as all things should be
     let final_count = ctx.in_flight.load(Ordering::SeqCst);
     if final_count != 0 {
-        eprintln!(
-	            "⚠️  DIVINE WARNING: in_flight counter is {final_count}, not 0. Some demons are still loose!"
-	        );
-        // Even God is merciful - we allow small imbalances due to random chaos
+        // The test uses randomized increments/decrements, so a small residual can occur due to the
+        // particular interleaving. Treat large residuals as a failure signal.
         assert!(
             final_count < 100,
-            "🔥 CATASTROPHIC FAILURE: {final_count} demons remain uncounted!"
+            "in_flight counter did not return close to zero (final_count={final_count})"
         );
     }
 }
