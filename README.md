@@ -25,93 +25,109 @@ You’ll typically also want a Tokio runtime (timeouts use `tokio::time`) and `a
 
 ## Quick start
 
+A tiny “door” FSM with explicit actions.
+
+Note: `fsm!` stores handlers behind trait objects, so each handler closure returns a boxed pinned future
+(`Box::pin(async move { ... })`).
+
 ```rust
-use obzenflow_fsm::{fsm, EventVariant, FsmAction, FsmContext, StateVariant, Transition};
+use obzenflow_fsm::{fsm, types::FsmResult, FsmAction, FsmContext, Transition};
 
-#[derive(Clone, Debug, PartialEq)]
-enum State {
-    Idle,
-    Running,
+#[derive(Clone, Debug, PartialEq, obzenflow_fsm::StateVariant)]
+enum DoorState {
+    Closed,
+    Open,
 }
 
-impl StateVariant for State {
-    fn variant_name(&self) -> &str {
-        match self {
-            State::Idle => "Idle",
-            State::Running => "Running",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum Event {
-    Start,
-}
-
-impl EventVariant for Event {
-    fn variant_name(&self) -> &str {
-        match self {
-            Event::Start => "Start",
-        }
-    }
+#[derive(Clone, Debug, obzenflow_fsm::EventVariant)]
+enum DoorEvent {
+    Open,
+    Close,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Action {
-    MarkStarted,
+enum DoorAction {
+    Ring,
+    Log(String),
 }
 
-struct Context {
-    started: bool,
+#[derive(Default)]
+struct DoorContext {
+    log: Vec<String>,
 }
 
-impl FsmContext for Context {}
+impl FsmContext for DoorContext {}
 
 #[async_trait::async_trait]
-impl FsmAction for Action {
-    type Context = Context;
+impl FsmAction for DoorAction {
+    type Context = DoorContext;
 
-    async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
+    async fn execute(&self, ctx: &mut Self::Context) -> FsmResult<()> {
         match self {
-            Action::MarkStarted => {
-                ctx.started = true;
-                Ok(())
-            }
+            DoorAction::Ring => ctx.log.push("Ring!".to_string()),
+            DoorAction::Log(msg) => ctx.log.push(msg.clone()),
         }
+        Ok(())
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), obzenflow_fsm::FsmError> {
-    let mut machine = fsm! {
-        state:   State;
-        event:   Event;
-        context: Context;
-        action:  Action;
-        initial: State::Idle;
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> FsmResult<()> {
+    let mut door = fsm! {
+        state:   DoorState;
+        event:   DoorEvent;
+        context: DoorContext;
+        action:  DoorAction;
+        initial: DoorState::Closed;
 
-        state State::Idle {
-            on Event::Start => |_s: &State, _e: &Event, _ctx: &mut Context| {
+        state DoorState::Closed {
+            on DoorEvent::Open => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
                 Box::pin(async move {
                     Ok(Transition {
-                        next_state: State::Running,
-                        actions: vec![Action::MarkStarted],
+                        next_state: DoorState::Open,
+                        actions: vec![
+                            DoorAction::Ring,
+                            DoorAction::Log("Door opened".into()),
+                        ],
+                    })
+                })
+            };
+        }
+
+        state DoorState::Open {
+            on DoorEvent::Close => |_s: &DoorState, _e: &DoorEvent, _ctx: &mut DoorContext| {
+                Box::pin(async move {
+                    Ok(Transition {
+                        next_state: DoorState::Closed,
+                        actions: vec![DoorAction::Log("Door closed".into())],
                     })
                 })
             };
         }
     };
 
-    let mut ctx = Context { started: false };
+    let mut ctx = DoorContext::default();
 
-    let actions = machine.handle(Event::Start, &mut ctx).await?;
-    machine.execute_actions(actions, &mut ctx).await?;
+    let actions = door.handle(DoorEvent::Open, &mut ctx).await?;
+    door.execute_actions(actions, &mut ctx).await?;
+    assert_eq!(door.state(), &DoorState::Open);
+
+    let actions = door.handle(DoorEvent::Close, &mut ctx).await?;
+    door.execute_actions(actions, &mut ctx).await?;
+    assert_eq!(door.state(), &DoorState::Closed);
+
+    assert_eq!(
+        ctx.log,
+        vec![
+            "Ring!".to_string(),
+            "Door opened".to_string(),
+            "Door closed".to_string(),
+        ]
+    );
 
     Ok(())
 }
 ```
-
-## Core model (Mealy machine)
 
 `obzenflow-fsm` is a Mealy machine: outputs depend on both the current state and the input event.
 
@@ -120,19 +136,64 @@ async fn main() -> Result<(), obzenflow_fsm::FsmError> {
 
 This keeps decision-making deterministic and makes side effects auditable.
 
-## Design background (FlowIPs)
+For more examples (timeouts, entry/exit hooks, unhandled handlers, host-loop patterns), see the crate docs on
+https://docs.rs/obzenflow-fsm.
 
-The longer “why” and design rationale live in the ObzenFlow improvement proposals:
+## Running in an async runtime (supervisor pattern)
 
-* `proposals/p0/complete/FLOWIP-057f-fsm-extraction.md`
-* `proposals/p0/complete/flowip-fsm-001-mutable-context-timeouts-errors.md`
-* `proposals/p0/complete/flowip-fsm-002-builder-dsl.md`
+`obzenflow-fsm` is designed to be driven by a host loop (often an actor/supervisor task):
+
+* The host owns the mutable context (`&mut Context`) and controls effect execution.
+* `StateMachine::handle(event, &mut ctx)` returns actions; the engine never runs effects implicitly.
+* Timeouts are cooperative: call `StateMachine::check_timeout(&mut ctx)` when it makes sense for your runtime.
+* Action ordering for a transition is: exit-actions → entry-actions → transition-actions (including self-transitions).
+
+This maps cleanly to “retry actions, map failures into explicit error events, and keep state evolution deterministic”.
+
+## Distributed systems guarantees (the “unholy trinity”)
+
+For outcomes that stay stable under duplicates, interleavings, and reshaping (batching/sharding), the tests are
+essentially pointing at the "unholy trinity" of distributed systems failures: fuzzy or broken
+idempotence, commutativity, and associativity guarantees. These are sufficient conditions for many dataflow
+operators, not universal requirements (some domains are intentionally order-dependent).
+
+In practice:
+
+* **Idempotence** keeps retries/replays from amplifying effects.
+* **Commutativity** makes nondeterministic interleavings less scary.
+* **Associativity** makes batching/sharding/parallel folding equivalent to sequential application.
 
 ## Testing
+
+The test suite is intentionally written as documentation. It tells a story about real failure modes and the
+guarantees that keep an async FSM correct under distributed-systems pressure (the “unholy trials”).
+
+It’s also loosely modeled after Dante’s *Divine Comedy*. Think of these failure modes as “circles of hell”.
+
+### The circles of hell (the unholy trials)
+
+* Circle 1: race conditions, shared-state correctness: `tests/test_race_condition.rs`
+* Circle 2: async coordination across multiple FSMs: `tests/test_async_coordination.rs`
+* Circle 3: journals, subscriptions, causality under concurrency: `tests/test_journal_subscription.rs`
+* Circle 4: the unholy trinity vs at-least-once delivery: `tests/test_mathematical_properties.rs`
+* Circle 5: timeouts, cancellation, and “never drop data”: `tests/test_timeout_cancellation.rs`
+* Circle 6: leaks/cycles/self-reference (the memory corruption gauntlet): `tests/test_memory_corruption.rs`
 
 ```bash
 cargo test
 ```
+
+Run one “circle” with output:
+
+```bash
+cargo test test_4_mark_of_the_beast_mathematical_properties -- --nocapture
+```
+
+Other feature-focused tests worth skimming:
+
+* Typed DSL basics and features: `tests/test_dsl_basic.rs`, `tests/test_dsl_features.rs`
+* Builder-only construction + validation guarantees: `tests/test_builder_enforcement.rs`, `tests/test_builder_only_construction.rs`
+* Compile-time safety and edge coverage: `tests/test_compile_safety.rs`, `tests/test_edge_cases.rs`, `tests/test_comprehensive.rs`
 
 ## Project links
 
