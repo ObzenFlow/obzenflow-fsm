@@ -157,7 +157,6 @@ fn test_reexport_construction_fails() {
 #[test]
 fn test_builder_enforcement_documentation() {
     // Documentation-only test: see the rustdoc on this function for manual verification steps.
-    assert!(true);
 }
 
 #[test]
