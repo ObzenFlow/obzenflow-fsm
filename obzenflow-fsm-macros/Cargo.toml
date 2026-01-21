@@ -2,8 +2,16 @@
 name = "obzenflow-fsm-macros"
 version = "0.1.0"
 edition = "2021"
+authors = ["ObzenFlow Contributors"]
 description = "Proc-macro helpers for the obzenflow-fsm crate (derives + DSL)"
+documentation = "https://docs.rs/obzenflow-fsm-macros"
+homepage = "https://github.com/ObzenFlow/obzenflow-fsm"
+repository = "https://github.com/ObzenFlow/obzenflow-fsm"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["fsm", "state-machine", "proc-macro", "async"]
+categories = ["asynchronous", "data-structures", "algorithms"]
+publish = true
 
 [lib]
 proc-macro = true
@@ -12,4 +20,3 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
-
