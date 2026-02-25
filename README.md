@@ -18,7 +18,7 @@ This crate was extracted as a standalone library so the FSM engine can be reused
 
 ```toml
 [dependencies]
-obzenflow-fsm = "0.3"
+obzenflow-fsm = "0.3.1"
 ```
 
 You’ll typically also want a Tokio runtime (timeouts use `tokio::time`) and `async-trait` for implementing actions.
@@ -172,12 +172,12 @@ It’s also loosely modeled after Dante’s *Divine Comedy*. Think of these fail
 
 ### The circles of hell (the unholy trials)
 
-* Circle 1: race conditions, shared-state correctness: `tests/test_race_condition.rs`
-* Circle 2: async coordination across multiple FSMs: `tests/test_async_coordination.rs`
-* Circle 3: journals, subscriptions, causality under concurrency: `tests/test_journal_subscription.rs`
-* Circle 4: the unholy trinity vs at-least-once delivery: `tests/test_mathematical_properties.rs`
-* Circle 5: timeouts, cancellation, and “never drop data”: `tests/test_timeout_cancellation.rs`
-* Circle 6: leaks/cycles/self-reference (the memory corruption gauntlet): `tests/test_memory_corruption.rs`
+* Circle 1: race conditions, shared-state correctness: `tests/circle_1_race_condition.rs`
+* Circle 2: async coordination across multiple FSMs: `tests/circle_2_async_coordination.rs`
+* Circle 3: journals, subscriptions, causality under concurrency: `tests/circle_3_journal_subscription.rs`
+* Circle 4: the unholy trinity vs at-least-once delivery: `tests/circle_4_mathematical_properties.rs`
+* Circle 5: timeouts, cancellation, and “never drop data”: `tests/circle_5_timeout_cancellation.rs`
+* Circle 6: leaks/cycles/self-reference (the memory corruption gauntlet): `tests/circle_6_memory_corruption.rs`
 
 ```bash
 cargo test
@@ -186,7 +186,7 @@ cargo test
 Run one “circle” with output:
 
 ```bash
-cargo test test_4_mark_of_the_beast_mathematical_properties -- --nocapture
+cargo test circle_4 -- --nocapture
 ```
 
 Other feature-focused tests worth skimming:

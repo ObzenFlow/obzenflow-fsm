@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Handler type aliases for FSM callbacks.
 //!
 //! Most users will never name these types directly; they are exposed for advanced use cases and

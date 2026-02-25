@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Tests demonstrating compile-time safety of the FSM
 //!
 //! Many of these tests are commented out because they SHOULD NOT compile.

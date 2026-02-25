@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Test 3: The Journal Subscription Chaos (Tower of Babel) 😈
 //!
 //! The Confusion of Tongues:

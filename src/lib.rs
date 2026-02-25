@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Async-first finite state machine (FSM) library inspired by Akka / Apache Pekko (Classic) FSM and
 //! [`edfsm`](https://docs.rs/edfsm).
 //!

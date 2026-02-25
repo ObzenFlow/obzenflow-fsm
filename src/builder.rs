@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Legacy fluent builder API (string-dispatched).
 //!
 //! Most users should use the typed [`crate::fsm!`] DSL instead.
