@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-25
+
+### Fixed
+- `#[derive(StateVariant)]` and `#[derive(EventVariant)]` now correctly match unit and tuple enum variants.
+
+### Changed
+- Prepared `obzenflow-fsm-macros` for publishing (crate metadata + policy files) and fixed `cargo publish --dry-run`.
+- Added SPDX headers across Rust sources and aligned CI with ObzenFlow (pinned toolchain, `--locked`, SPDX checks).
+- Added `Cargo.lock`, renamed “circle” tests to `circle_N_*`, and added `tests/README.md`.
+- Documentation and README improvements.
+
 ## [0.3.0] - 2025-11-27
 
 ### Changed
@@ -78,7 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example FSM implementations
 - Test suite demonstrating advanced patterns
 
-[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.1
 [0.3.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.0
 [0.2.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.1
 [0.2.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.0
