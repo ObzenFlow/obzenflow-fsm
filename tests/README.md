@@ -8,14 +8,16 @@ Six numbered tests that target real failure modes in async, event-sourced state 
 
 They are loosely modelled after Dante's circles. In practice, they stress-test the properties that keep ObzenFlow's pipeline runtime correct under concurrency, delivery semantics, and resource pressure.
 
-| Circle | File | What it proves |
-|--------|------|----------------|
-| 1 | `circle_1_race_condition.rs` | Shared-state correctness under contention. Ten concurrent FSMs, atomic counters, barrier-synchronised drain. |
-| 2 | `circle_2_async_coordination.rs` | Coordinated startup and shutdown across a pipeline of nested FSMs. Barrier sync, broadcast drain, staggered initialisation. |
-| 3 | `circle_3_journal_subscription.rs` | Journal writes, subscription filtering, and causal ordering under chaos. Vector clocks, bounded channels, deliberate out-of-order delivery. |
-| 4 | `circle_4_mathematical_properties.rs` | The "unholy trinity" (idempotence, commutativity, associativity) vs at-least-once delivery. Deduplication by operation ID, non-commutativity proof, overflow semantics. |
-| 5 | `circle_5_timeout_cancellation.rs` | Timeout correctness without silent data loss. The "Jonestown Protocol": the FSM self-destructs rather than dropping a message. Downstream failure propagation. |
-| 6 | `circle_6_memory_corruption.rs` | Cyclic references, abandoned async tasks, mass spawn/kill. Proves `Arc`-based structures survive abuse without leaking history or corrupting state. |
+Each circle also maps to a dimension in ObzenFlow's [CHAIN maturity model](https://obzenflow.dev/philosophy/chain/), which measures reflectivity across five links: **Causality**, **History**, **Agency**, **Intent**, and **Narrative**. CHAIN guided which failure modes to stress-test, and the test results fed back into where the model needed more work.
+
+| Circle | File | CHAIN link | What it proves |
+|--------|------|------------|----------------|
+| 1 | `circle_1_race_condition.rs` | Causality | Shared-state correctness under contention. Ten concurrent FSMs, atomic counters, barrier-synchronised drain. |
+| 2 | `circle_2_async_coordination.rs` | Agency | Coordinated startup and shutdown across a pipeline of nested FSMs. Barrier sync, broadcast drain, staggered initialisation. |
+| 3 | `circle_3_journal_subscription.rs` | Causality, History | Journal writes, subscription filtering, and causal ordering under chaos. Vector clocks, bounded channels, deliberate out-of-order delivery. |
+| 4 | `circle_4_mathematical_properties.rs` | Causality | The "unholy trinity" (idempotence, commutativity, associativity) vs at-least-once delivery. Deduplication by operation ID, non-commutativity proof, overflow semantics. |
+| 5 | `circle_5_timeout_cancellation.rs` | Intent | Timeout correctness without silent data loss. The "Jonestown Protocol": the FSM self-destructs rather than dropping a message. Downstream failure propagation. |
+| 6 | `circle_6_memory_corruption.rs` | History | Cyclic references, abandoned async tasks, mass spawn/kill. Proves `Arc`-based structures survive abuse without leaking history or corrupting state. |
 
 ### Running the tests
 
