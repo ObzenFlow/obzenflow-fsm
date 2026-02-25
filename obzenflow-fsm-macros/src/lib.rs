@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Proc-macro helpers for `obzenflow-fsm`.
 //!
 //! This crate is an implementation detail of `obzenflow-fsm`. End users should depend on

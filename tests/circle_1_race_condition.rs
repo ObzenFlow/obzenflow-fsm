@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Test 1: The Race Condition from Hell 😈
 //!
 //! Satan's Attack Vector:

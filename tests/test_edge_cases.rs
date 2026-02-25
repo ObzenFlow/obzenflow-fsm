@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Edge case tests for the FSM implementation
 //!
 //! These tests push the FSM to its limits with extreme scenarios

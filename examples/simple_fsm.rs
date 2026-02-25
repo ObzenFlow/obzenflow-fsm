@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 //! Simple FSM example using the `fsm!` DSL.
 
 use obzenflow_fsm::{fsm, EventVariant, FsmAction, FsmContext, StateVariant, Transition};

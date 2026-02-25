@@ -6,40 +6,119 @@ on:
   pull_request:
 
 jobs:
-  test:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: Generate lockfile
-        run: cargo generate-lockfile
+          toolchain: 1.93.0
+          components: rustfmt
+      - name: Verify lockfile
+        run: cargo fetch --locked
       - uses: Swatinem/rust-cache@v2
 
       - name: Format
         run: cargo fmt --all --check
 
-      - name: Clippy (workspace, default)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+  clippy:
+    needs: fmt
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            cargo_args: ""
+          - name: all-features
+            cargo_args: "--all-features"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: clippy
+      - name: Verify lockfile
+        run: cargo fetch --locked
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Tests (workspace, default)
-        run: cargo test --workspace
+      - name: Clippy (${{ matrix.name }})
+        run: cargo clippy --workspace --all-targets --locked ${{ matrix.cargo_args }} -- -D warnings
 
-      - name: Clippy (workspace, all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+  test:
+    needs: fmt
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            cargo_args: ""
+          - name: all-features
+            cargo_args: "--all-features"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+      - name: Verify lockfile
+        run: cargo fetch --locked
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Tests (workspace, all features)
-        run: cargo test --workspace --all-features
+      - name: Tests (${{ matrix.name }})
+        run: cargo test --workspace --locked ${{ matrix.cargo_args }}
 
   policy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Generate lockfile
-        run: cargo generate-lockfile
+        with:
+          toolchain: 1.93.0
+      - name: Verify lockfile
+        run: cargo fetch --locked
       - uses: Swatinem/rust-cache@v2
+
+      - name: Verify SPDX headers
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          expected = [
+              "// SPDX-License-Identifier: MIT OR Apache-2.0",
+              "// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors",
+              "// https://obzenflow.dev",
+          ]
+
+          files = subprocess.check_output(["git", "ls-files", "*.rs"], text=True).splitlines()
+          bad: list[tuple[str, list[str]]] = []
+          for f in files:
+              lines = Path(f).read_text(encoding="utf-8").splitlines()
+              got = lines[:3]
+              if got != expected:
+                  bad.append((f, got))
+
+          if bad:
+              print("SPDX header mismatch in Rust files:")
+              for f, got in bad:
+                  print(f" - {f}")
+                  for i, line in enumerate(got or ["<missing>"] * 3, start=1):
+                      print(f"   {i}: {line}")
+              sys.exit(1)
+
+          print(f"SPDX headers OK in {len(files)} Rust files")
+          PY
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
@@ -56,4 +135,3 @@ jobs:
 
       - name: cargo-machete
         run: cargo machete --skip-target-dir
-

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+
 use proc_macro2::TokenStream;
 use syn::parse::{Parse, ParseStream};
 use syn::{braced, parse2, Error, Expr, ExprPath, Ident, Result, Token, Type};
