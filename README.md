@@ -165,35 +165,19 @@ In practice:
 
 ## Testing
 
-The test suite is intentionally written as documentation. It tells a story about real failure modes and the
-guarantees that keep an async FSM correct under distributed-systems pressure (the “unholy trials”).
+The test suite is organised around the “circles of distributed systems hell”, six numbered integration tests that target real failure modes in async, event-sourced state machines. Each circle maps to a dimension in ObzenFlow’s [CHAIN maturity model](https://obzenflow.dev/philosophy/chain/).
 
-It’s also loosely modeled after Dante’s *Divine Comedy*. Think of these failure modes as “circles of hell”.
-
-### The circles of hell (the unholy trials)
-
-* Circle 1: race conditions, shared-state correctness: `tests/circle_1_race_condition.rs`
-* Circle 2: async coordination across multiple FSMs: `tests/circle_2_async_coordination.rs`
-* Circle 3: journals, subscriptions, causality under concurrency: `tests/circle_3_journal_subscription.rs`
-* Circle 4: the unholy trinity vs at-least-once delivery: `tests/circle_4_mathematical_properties.rs`
-* Circle 5: timeouts, cancellation, and “never drop data”: `tests/circle_5_timeout_cancellation.rs`
-* Circle 6: leaks/cycles/self-reference (the memory corruption gauntlet): `tests/circle_6_memory_corruption.rs`
+See [`tests/README.md`](tests/README.md) for the full breakdown.
 
 ```bash
 cargo test
 ```
 
-Run one “circle” with output:
+Run one circle with output:
 
 ```bash
 cargo test circle_4 -- --nocapture
 ```
-
-Other feature-focused tests worth skimming:
-
-* Typed DSL basics and features: `tests/test_dsl_basic.rs`, `tests/test_dsl_features.rs`
-* Builder-only construction + validation guarantees: `tests/test_builder_enforcement.rs`, `tests/test_builder_only_construction.rs`
-* Compile-time safety and edge coverage: `tests/test_compile_safety.rs`, `tests/test_edge_cases.rs`, `tests/test_comprehensive.rs`
 
 ## Project links
 
