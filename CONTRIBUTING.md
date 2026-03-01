@@ -1,23 +1,37 @@
 # Contributing to ObzenFlow FSM
 
-Thank you for your interest in contributing to ObzenFlow FSM! We welcome contributions from the community.
+Thanks for your interest in contributing!
 
-## Getting Started
+By participating, you agree to follow the Code of Conduct (`CODE_OF_CONDUCT.md`).
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/your-username/obzenflow-fsm.git`
-3. Create a new branch: `git checkout -b feature/your-feature-name`
-4. Make your changes
-5. Run tests: `cargo test`
-6. Commit your changes: `git commit -am 'Add some feature'`
-7. Push to the branch: `git push origin feature/your-feature-name`
-8. Submit a pull request
+## Sign-off (DCO)
+
+We use the **Developer Certificate of Origin (DCO)** instead of a Contributor License Agreement (CLA).
+
+- All commits in a PR must be signed off.
+- Sign off your commits with: `git commit -s`
+- The sign-off line looks like: `Signed-off-by: Your Name <your.email@example.com>`
+
+The full text is in `DCO.md`.
+
+### Fixing missing sign-offs
+
+- Amend the most recent commit: `git commit --amend -s`
+- Sign off all commits on your branch (interactive): `git rebase -i --signoff main`
+
+## Contribution provenance
+
+If you are employed, you are responsible for ensuring your employer's intellectual property policies permit your contribution. Many employment contracts include IP assignment clauses that may cover work done outside of office hours or on personal equipment.
+
+If your employer requires a corporate sign-off or approval for open source contributions, please obtain it before submitting a pull request.
+
+ObzenFlow maintainers reserve the right to request written employer acknowledgment for any contribution at their discretion. This is a standard open source project safeguard, not a reflection on any individual contributor. See the Corporate Contribution Acknowledgment Process for details: `CORPORATE_ACKNOWLEDGMENT_PROCESS.md`.
 
 ## Development Setup
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust toolchain (see `.github/workflows/ci.yml` for the pinned version used in CI)
 - Cargo
 
 ### Building
@@ -33,7 +47,7 @@ Run all tests:
 cargo test
 ```
 
-Run specific test:
+Run a specific test:
 ```bash
 cargo test test_race_condition
 ```
@@ -133,4 +147,22 @@ Feel free to open an issue for any questions about contributing.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same dual MIT/Apache-2.0 license as the project.
+By contributing, you agree that your contributions will be licensed under the project’s dual license (MIT OR Apache-2.0).
+
+## Source headers (SPDX)
+
+All Rust source files (`*.rs`) must start with an SPDX header block.
+
+Use:
+
+```rust
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
+// https://obzenflow.dev
+```
+
+Do not add individual names to per-file headers. Attribution lives in `LICENSE-MIT` and `LICENSE-APACHE`.
+
+## Security
+
+Please do not open public issues for security vulnerabilities. See `SECURITY.md`.
