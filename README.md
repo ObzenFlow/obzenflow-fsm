@@ -1,6 +1,6 @@
 # ObzenFlow FSM
 
-`obzenflow-fsm` is an async-first finite state machine library for Rust, built around a Mealy-machine core and explicit actions.
+`obzenflow-fsm` is an async-first finite state machine library for Rust, built around deterministic transitions and explicit actions.
 
 * Deterministic transitions: `(State, Event, Context) -> (State', Actions)`
 * Single-owner mutable context API (`&mut Context`)
@@ -8,9 +8,11 @@
 * Timeouts, entry/exit hooks, wildcard/unhandled handling
 * Structured errors (`FsmError`) and strict builder validation
 
+This crate is inspired by Akka / Apache Pekko (Classic) FSM patterns and the [`edfsm`](https://docs.rs/edfsm) crate. If you need a `no_std` event-driven FSM (and an attribute-macro DSL), `edfsm` is an excellent choice. If you need an open source FSM solution on the JVM, [`Apache Pekko`](https://github.com/apache/pekko) is worth considering. Both are more mature, general-purpose options; `obzenflow-fsm` is intentionally niche and shaped around async Tokio host loops and explicit effect execution.
+
 ## Why this exists
 
-ObzenFlow’s architecture leans heavily on event-sourced finite state machines: keep state evolution deterministic, make effects explicit, and make “what happened” auditable.
+ObzenFlow’s architecture leans heavily on event-sourced finite state machines that keeps state evolution deterministic, make effects explicit, and make “what happened” auditable.
 
 This crate was extracted as a standalone library so the FSM engine can be reused independently (it has no dependencies on other ObzenFlow crates).
 
@@ -18,7 +20,7 @@ This crate was extracted as a standalone library so the FSM engine can be reused
 
 ```toml
 [dependencies]
-obzenflow-fsm = "0.3.1"
+obzenflow-fsm = "0.3.2"
 ```
 
 You’ll typically also want a Tokio runtime (timeouts use `tokio::time`) and `async-trait` for implementing actions.
@@ -27,8 +29,7 @@ You’ll typically also want a Tokio runtime (timeouts use `tokio::time`) and `a
 
 A tiny “door” FSM with explicit actions.
 
-Note: `fsm!` stores handlers behind trait objects, so each handler closure returns a boxed pinned future
-(`Box::pin(async move { ... })`).
+Note: `fsm!` stores handlers behind trait objects, so each handler closure returns a boxed pinned future (`Box::pin(async move { ... })`).
 
 ```rust
 use obzenflow_fsm::{fsm, types::FsmResult, FsmAction, FsmContext, Transition};
@@ -129,39 +130,17 @@ async fn main() -> FsmResult<()> {
 }
 ```
 
-`obzenflow-fsm` is a Mealy machine: outputs depend on both the current state and the input event.
+## Design
+
+In ObzenFlow ([obzenflow.dev](https://obzenflow.dev)), `obzenflow-fsm` powers effect execution and state management by keeping state evolution deterministic and making effects explicit via actions.
 
 * Transition handlers are async and return a `Transition { next_state, actions }`.
-* Actions are executed explicitly (often by the same host loop) via `StateMachine::execute_actions`.
-
-This keeps decision-making deterministic and makes side effects auditable.
-
-For more examples (timeouts, entry/exit hooks, unhandled handlers, host-loop patterns), see the crate docs on
-https://docs.rs/obzenflow-fsm.
-
-## Running in an async runtime (supervisor pattern)
-
-`obzenflow-fsm` is designed to be driven by a host loop (often an actor/supervisor task):
-
-* The host owns the mutable context (`&mut Context`) and controls effect execution.
 * `StateMachine::handle(event, &mut ctx)` returns actions; the engine never runs effects implicitly.
+* Actions are executed explicitly (often by the same host loop) via `StateMachine::execute_actions`.
 * Timeouts are cooperative: call `StateMachine::check_timeout(&mut ctx)` when it makes sense for your runtime.
 * Action ordering for a transition is: exit-actions → entry-actions → transition-actions (including self-transitions).
 
-This maps cleanly to “retry actions, map failures into explicit error events, and keep state evolution deterministic”.
-
-## Distributed systems guarantees (the “unholy trinity”)
-
-For outcomes that stay stable under duplicates, interleavings, and reshaping (batching/sharding), the tests are
-essentially pointing at the "unholy trinity" of distributed systems failures: fuzzy or broken
-idempotence, commutativity, and associativity guarantees. These are sufficient conditions for many dataflow
-operators, not universal requirements (some domains are intentionally order-dependent).
-
-In practice:
-
-* **Idempotence** keeps retries/replays from amplifying effects.
-* **Commutativity** makes nondeterministic interleavings less scary.
-* **Associativity** makes batching/sharding/parallel folding equivalent to sequential application.
+For more examples (timeouts, entry/exit hooks, unhandled handlers, host-loop patterns), see the crate docs on https://docs.rs/obzenflow-fsm.
 
 ## Testing
 
