@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.2] - 2026-03-01
 
 ### Added
-- Added DCO and corporate acknowledgment governance docs.
+- Added DCO governance docs.
 - Added a PR-only DCO check in CI.
 
 ### Changed

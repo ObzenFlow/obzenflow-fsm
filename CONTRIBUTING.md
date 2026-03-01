@@ -24,8 +24,7 @@ The full text is in `DCO.md`.
 If you are employed, you are responsible for ensuring your employer's intellectual property policies permit your contribution. Many employment contracts include IP assignment clauses that may cover work done outside of office hours or on personal equipment.
 
 If your employer requires a corporate sign-off or approval for open source contributions, please obtain it before submitting a pull request.
-
-ObzenFlow maintainers reserve the right to request written employer acknowledgment for any contribution at their discretion. This is a standard open source project safeguard, not a reflection on any individual contributor. See the Corporate Contribution Acknowledgment Process for details: `CORPORATE_ACKNOWLEDGMENT_PROCESS.md`.
+By signing off your commits (DCO), you attest you have the right to contribute the work under the project’s license terms.
 
 ## Development Setup
 
