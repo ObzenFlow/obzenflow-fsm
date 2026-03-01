@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "README.md",
+                "file": "CHANGELOG.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "README"
+              "title": "CHANGELOG"
             }
           }
         ]
@@ -185,6 +185,17 @@
   },
   "active": "a1f2466780086a92",
   "lastOpenFiles": [
+    "README.md",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/0kxs3t930tnut6a5x88yl4fub.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/ea47gl0dnrlp336e1fos1cdq9.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/work-products.bin",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/query-cache.bin",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/e7u0wwxijsqsqk9ldmgxflp0z.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/dvhm05rdt7e8bo01lnp26434a.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/d1l75040y0nafb5n3zsqxomvc.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/dep-graph.bin",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/cvbnbn0x4j3fhsu641q0ggige.o",
+    "target/debug/incremental/obzenflow_fsm_macros-022n6sf5ir3ys/s-hg8itmchmc-1edxwyp-f420hlkcyqcwlt21nmpwa7sni/ch70u9c7tj3cx8nlme9634uk4.o",
     "DCO.md"
   ]
 }
