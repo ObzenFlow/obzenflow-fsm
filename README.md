@@ -20,7 +20,7 @@ This crate was extracted as a standalone library so the FSM engine can be reused
 
 ```toml
 [dependencies]
-obzenflow-fsm = "0.3.2"
+obzenflow-fsm = "0.3.3"
 ```
 
 You’ll typically also want a Tokio runtime (timeouts use `tokio::time`) and `async-trait` for implementing actions.
