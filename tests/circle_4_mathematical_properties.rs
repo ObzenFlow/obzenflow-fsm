@@ -17,6 +17,7 @@
 //! What it tests:
 //! - Duplicate event handling (same event delivered multiple times)
 //! - Order-dependent operations (A then B ≠ B then A)
+//! - Regrouped reductions with non-associative deltas
 //! - State accumulation under duplicates
 //! - Mathematical properties vs real-world guarantees
 //!
@@ -37,7 +38,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[tokio::test]
-async fn test_4_mark_of_the_beast_mathematical_properties() {
+async fn circle_4_mark_of_the_beast_mathematical_properties() {
     #[derive(Clone, Debug, PartialEq)]
     enum BeastState {
         Counting {
@@ -140,6 +141,55 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         seen_events: Arc::new(RwLock::new(std::collections::HashSet::new())),
         duplicate_count: Arc::new(AtomicUsize::new(0)),
         operation_log: Arc::new(RwLock::new(Vec::new())),
+    };
+
+    let build_subtract_machine = |initial_balance| {
+        FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
+            balance: initial_balance,
+            operations: vec![],
+            operation_ids: std::collections::HashSet::new(),
+        })
+        .when("Counting")
+        .on(
+            "Subtract",
+            |state, event: &BeastEvent, _ctx: &mut BeastContext| {
+                let state = state.clone();
+                let event = event.clone();
+                Box::pin(async move {
+                    if let (
+                        BeastState::Counting {
+                            balance,
+                            mut operations,
+                            operation_ids,
+                        },
+                        BeastEvent::Subtract { id, value },
+                    ) = (state, event)
+                    {
+                        operations.push(format!("Subtract {id} by {value}"));
+                        Ok(Transition {
+                            next_state: BeastState::Counting {
+                                balance: balance.saturating_sub(value),
+                                operations,
+                                operation_ids,
+                            },
+                            actions: vec![],
+                        })
+                    } else {
+                        unreachable!()
+                    }
+                })
+            },
+        )
+        .done()
+        .build()
+    };
+
+    let balance_of = |state: &BeastState| {
+        if let BeastState::Counting { balance, .. } = state {
+            *balance
+        } else {
+            panic!("expected Counting state, got {state:?}");
+        }
     };
 
     // === BUILD THE BEAST'S FSM ===
@@ -279,6 +329,44 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
                             operation_ids,
                         },
                         actions: vec![BeastAction::RecordOperation(format!("Append:{value}"))],
+                    })
+                } else {
+                    unreachable!()
+                }
+            })
+        },
+    )
+    .on(
+        "Subtract",
+        |state, event: &BeastEvent, ctx: &mut BeastContext| {
+            let state = state.clone();
+            let event = event.clone();
+            Box::pin(async move {
+                if let (
+                    BeastState::Counting {
+                        balance,
+                        mut operations,
+                        operation_ids,
+                    },
+                    BeastEvent::Subtract { id, value },
+                ) = (state, event)
+                {
+                    // Non-associative: regrouping deltas changes the result.
+                    operations.push(format!("Subtract {id} by {value}"));
+                    ctx.operation_log
+                        .write()
+                        .await
+                        .push((id, format!("Subtract:{value}")));
+
+                    let new_balance = balance.saturating_sub(value);
+
+                    Ok(Transition {
+                        next_state: BeastState::Counting {
+                            balance: new_balance,
+                            operations,
+                            operation_ids,
+                        },
+                        actions: vec![BeastAction::RecordOperation(format!("Subtract:{value}"))],
                     })
                 } else {
                     unreachable!()
@@ -433,7 +521,57 @@ async fn test_4_mark_of_the_beast_mathematical_properties() {
         "Operations are commutative when they shouldn't be!"
     );
 
-    // Trial 3: The Number of the Beast
+    // Trial 3: Non-associative regrouping
+    //
+    // Sequential application is left-associated: (100 - 10) - 5 = 85.
+    // A batching layer that combines deltas as 10 - 5 first would apply
+    // 100 - (10 - 5) = 95. That regrouping is invalid for subtraction.
+    let mut left_associated = build_subtract_machine(100);
+    left_associated
+        .handle(
+            BeastEvent::Subtract {
+                id: "left_a".to_string(),
+                value: 10,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+    left_associated
+        .handle(
+            BeastEvent::Subtract {
+                id: "left_b".to_string(),
+                value: 5,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+
+    let grouped_delta = 10_i64.saturating_sub(5);
+    let mut right_grouped = build_subtract_machine(100);
+    right_grouped
+        .handle(
+            BeastEvent::Subtract {
+                id: "right_grouped".to_string(),
+                value: grouped_delta,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+
+    let left_balance = balance_of(left_associated.state());
+    let right_balance = balance_of(right_grouped.state());
+
+    assert_eq!(left_balance, 85);
+    assert_eq!(right_balance, 95);
+    assert_ne!(
+        left_balance, right_balance,
+        "Subtraction was treated as associative; regrouped deltas changed no state"
+    );
+
+    // Trial 4: The Number of the Beast
 
     // Send exactly 566 more credits to reach 666 from 1000
     for i in 0..566 {
