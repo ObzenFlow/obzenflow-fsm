@@ -15,7 +15,7 @@ Each circle also maps to a dimension in ObzenFlow's [CHAIN maturity model](https
 | 1 | `circle_1_race_condition.rs` | Causality | Shared-state correctness under contention. Ten concurrent FSMs, atomic counters, barrier-synchronised drain. |
 | 2 | `circle_2_async_coordination.rs` | Agency | Coordinated startup and shutdown across a pipeline of nested FSMs. Barrier sync, broadcast drain, staggered initialisation. |
 | 3 | `circle_3_journal_subscription.rs` | Causality, History | Journal writes, subscription filtering, and causal ordering under chaos. Vector clocks, bounded channels, deliberate out-of-order delivery. |
-| 4 | `circle_4_mathematical_properties.rs` | Causality | The "unholy trinity" (idempotence, commutativity, associativity) vs at-least-once delivery. Deduplication by operation ID, non-commutativity proof, non-associative regrouping proof, sentinel corruption transition. |
+| 4 | `circle_4_mathematical_properties.rs` | Causality | The "unholy trinity" (idempotence, commutativity, associativity) vs at-least-once delivery. In-state deduplication by operation ID, order-sensitive append proof, correct debit batching, naive partial-average regrouping failure, sentinel corruption transition. |
 | 5 | `circle_5_timeout_cancellation.rs` | Intent | Timeout correctness without silent data loss. The "Jonestown Protocol": the FSM self-destructs rather than dropping a message. Downstream failure propagation. |
 | 6 | `circle_6_memory_corruption.rs` | History | Cyclic references, abandoned async tasks, mass spawn/kill. Proves `Arc`-based structures survive abuse without leaking history or corrupting state. |
 

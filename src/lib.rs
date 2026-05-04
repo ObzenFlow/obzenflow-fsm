@@ -64,9 +64,10 @@
 //! - **Associativity**: when you represent updates as deltas/partials with a “combine” operator,
 //!   regrouping combinations does not change the result: `(a ⊕ b) ⊕ c == a ⊕ (b ⊕ c)`.
 //!   This is what makes batching and parallel folding safe: combine partial aggregates in any
-//!   grouping and get the same combined delta. If you can only define a sequential update (or use a
-//!   non-associative operator like subtraction), then “batch then reduce” is not equivalent to
-//!   “apply one-by-one”.
+//!   grouping and get the same combined delta. The key question is whether the combine operator on
+//!   event payloads is sound for the handler: debit/subtract deltas batch by addition, while a naive
+//!   "average of averages" without counts does not. Boundary behaviour matters too; saturating or
+//!   clipping arithmetic can make otherwise simple mixed updates order-dependent at the edges.
 //!
 //! When a property does *not* hold, model that explicitly: carry ordering metadata, detect and
 //! surface duplicates, or transition into a domain `Corrupted`/`Failed` state instead of silently
