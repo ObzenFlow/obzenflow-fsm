@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Corrected Circle 4's mathematical-property harness: idempotence now depends on in-state operation IDs, append ordering is compared from equivalent initial states, debit batching uses additive deltas, and the non-associative regrouping example now uses naive partial averages.
+
 ## [0.3.3] - 2026-05-02
 
 ### Fixed
-- Added the missing Circle 4 associativity/regrouping test coverage for non-associative subtraction.
+- Added the missing Circle 4 associativity/regrouping test coverage.
 - Renamed the Circle 4 test so `cargo test circle_4 -- --nocapture` runs the documented target.
 - Updated the Circle 4 test README description to match the implemented mathematical-property coverage.
 

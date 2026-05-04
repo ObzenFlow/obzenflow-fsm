@@ -8,16 +8,17 @@
 //! - 666 duplicate events (AT LEAST ONCE delivery guarantee)
 //! - Non-idempotent operations (balance += amount)
 //! - Non-commutative operations (append to list)
-//! - Non-associative operations ((a-b)-c ≠ a-(b-c))
+//! - Non-associative reductions (naive partial averages without counts)
 //!
 //! The Unholy Trinity of Distributed Systems:
-//! - Idempotent × Associative × Commutative = Correct
-//! - But AT LEAST ONCE breaks this trinity!
+//! - Idempotent × Associative × Commutative = safe under many retry/reorder/regroup workloads
+//! - But AT LEAST ONCE forces those properties to be explicit!
 //!
 //! What it tests:
 //! - Duplicate event handling (same event delivered multiple times)
 //! - Order-dependent operations (A then B ≠ B then A)
-//! - Regrouped reductions with non-associative deltas
+//! - Correct batching for additive deltas
+//! - Regrouped reductions with a genuinely non-associative combine operator
 //! - State accumulation under duplicates
 //! - Mathematical properties vs real-world guarantees
 //!
@@ -68,8 +69,10 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         Debit { id: String, amount: i64 },
         // Non-commutative: order matters
         Append { id: String, value: String },
-        // Non-associative: (a-b)-c ≠ a-(b-c)
+        // Additive deltas: correctly batch by summing payloads.
         Subtract { id: String, value: i64 },
+        // Non-associative: averaging partial averages without carrying counts.
+        NaiveAverage { id: String, value: i64 },
         // The mark
         MarkOfBeast,
     }
@@ -81,6 +84,7 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                 BeastEvent::Debit { .. } => "Debit",
                 BeastEvent::Append { .. } => "Append",
                 BeastEvent::Subtract { .. } => "Subtract",
+                BeastEvent::NaiveAverage { .. } => "NaiveAverage",
                 BeastEvent::MarkOfBeast => "MarkOfBeast",
             }
         }
@@ -95,8 +99,6 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
 
     #[derive(Clone)]
     struct BeastContext {
-        // Track all events seen (for duplicate detection)
-        seen_events: Arc<RwLock<std::collections::HashSet<String>>>,
         // Count duplicates
         duplicate_count: Arc<AtomicUsize>,
         // Track operation order for non-commutative ops
@@ -137,11 +139,16 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         }
     }
 
-    let mut ctx = BeastContext {
-        seen_events: Arc::new(RwLock::new(std::collections::HashSet::new())),
+    let new_context = || BeastContext {
         duplicate_count: Arc::new(AtomicUsize::new(0)),
         operation_log: Arc::new(RwLock::new(Vec::new())),
     };
+
+    fn naive_average(lhs: i64, rhs: i64) -> i64 {
+        lhs.saturating_add(rhs) / 2
+    }
+
+    let mut ctx = new_context();
 
     let build_subtract_machine = |initial_balance| {
         FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
@@ -169,6 +176,88 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                         Ok(Transition {
                             next_state: BeastState::Counting {
                                 balance: balance.saturating_sub(value),
+                                operations,
+                                operation_ids,
+                            },
+                            actions: vec![],
+                        })
+                    } else {
+                        unreachable!()
+                    }
+                })
+            },
+        )
+        .done()
+        .build()
+    };
+
+    let build_append_machine = || {
+        FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
+            balance: 0,
+            operations: vec![],
+            operation_ids: std::collections::HashSet::new(),
+        })
+        .when("Counting")
+        .on(
+            "Append",
+            |state, event: &BeastEvent, _ctx: &mut BeastContext| {
+                let state = state.clone();
+                let event = event.clone();
+                Box::pin(async move {
+                    if let (
+                        BeastState::Counting {
+                            balance,
+                            mut operations,
+                            operation_ids,
+                        },
+                        BeastEvent::Append { value, .. },
+                    ) = (state, event)
+                    {
+                        operations.push(value);
+                        Ok(Transition {
+                            next_state: BeastState::Counting {
+                                balance,
+                                operations,
+                                operation_ids,
+                            },
+                            actions: vec![],
+                        })
+                    } else {
+                        unreachable!()
+                    }
+                })
+            },
+        )
+        .done()
+        .build()
+    };
+
+    let build_naive_average_machine = |initial_balance| {
+        FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(BeastState::Counting {
+            balance: initial_balance,
+            operations: vec![],
+            operation_ids: std::collections::HashSet::new(),
+        })
+        .when("Counting")
+        .on(
+            "NaiveAverage",
+            |state, event: &BeastEvent, _ctx: &mut BeastContext| {
+                let state = state.clone();
+                let event = event.clone();
+                Box::pin(async move {
+                    if let (
+                        BeastState::Counting {
+                            balance,
+                            mut operations,
+                            operation_ids,
+                        },
+                        BeastEvent::NaiveAverage { id, value },
+                    ) = (state, event)
+                    {
+                        operations.push(format!("NaiveAverage {id} with {value}"));
+                        Ok(Transition {
+                            next_state: BeastState::Counting {
+                                balance: naive_average(balance, value),
                                 operations,
                                 operation_ids,
                             },
@@ -215,29 +304,23 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                 ) = (state, event)
                 {
                     // === DUPLICATE DETECTION ===
-                    let is_duplicate = {
-                        let mut seen = ctx.seen_events.write().await;
-                        !seen.insert(id.clone())
-                    };
-
-                    if is_duplicate {
+                    // The FSM state is the source of truth for idempotence. Context may track
+                    // metrics, but it must not be required to decide whether a logical event
+                    // has already changed state.
+                    if operation_ids.contains(&id) {
                         ctx.duplicate_count.fetch_add(1, Ordering::Relaxed);
 
-                        // CHOICE 1: Make it idempotent (check operation_ids)
-                        if operation_ids.contains(&id) {
-                            // Already processed, ignore
-                            return Ok(Transition {
-                                next_state: BeastState::Counting {
-                                    balance,
-                                    operations,
-                                    operation_ids,
-                                },
-                                actions: vec![BeastAction::AlertDuplicate(id)],
-                            });
-                        }
+                        // Already processed, ignore.
+                        return Ok(Transition {
+                            next_state: BeastState::Counting {
+                                balance,
+                                operations,
+                                operation_ids,
+                            },
+                            actions: vec![BeastAction::AlertDuplicate(id)],
+                        });
                     }
 
-                    // CHOICE 2: Process anyway (AT LEAST ONCE breaks idempotency!)
                     operation_ids.insert(id.clone());
                     operations.push(format!("Credit {id} by {amount}"));
                     ctx.operation_log
@@ -245,7 +328,6 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                         .await
                         .push((id.clone(), format!("Credit:{amount}")));
 
-                    // Non-idempotent operation!
                     let new_balance = balance.saturating_add(amount);
 
                     Ok(Transition {
@@ -351,7 +433,7 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                     BeastEvent::Subtract { id, value },
                 ) = (state, event)
                 {
-                    // Non-associative: regrouping deltas changes the result.
+                    // Additive deltas batch by summing payloads; see the regrouping trial below.
                     operations.push(format!("Subtract {id} by {value}"));
                     ctx.operation_log
                         .write()
@@ -436,6 +518,39 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         );
     }
 
+    let mut replay_ctx = new_context();
+    let replay_actions = machine
+        .handle(
+            BeastEvent::Credit {
+                id: "credit_0".to_string(),
+                amount: 100,
+            },
+            &mut replay_ctx,
+        )
+        .await
+        .unwrap();
+
+    if let BeastState::Counting {
+        balance,
+        operation_ids,
+        ..
+    } = machine.state()
+    {
+        assert_eq!(
+            balance, &1000,
+            "Idempotency depended on context instead of persisted FSM state"
+        );
+        assert!(
+            operation_ids.contains("credit_0"),
+            "expected processed operation ID to remain in FSM state"
+        );
+    }
+    assert_eq!(
+        replay_actions,
+        vec![BeastAction::AlertDuplicate("credit_0".to_string())]
+    );
+    assert_eq!(replay_ctx.duplicate_count.load(Ordering::Relaxed), 1);
+
     // Trial 2: Non-commutative operations
     let append_events = vec![
         BeastEvent::Append {
@@ -452,95 +567,80 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         },
     ];
 
+    let mut ordered_machine = build_append_machine();
+    let mut append_ctx = new_context();
+
     // Process in order
     for event in &append_events {
-        machine.handle(event.clone(), &mut ctx).await.unwrap();
+        ordered_machine
+            .handle(event.clone(), &mut append_ctx)
+            .await
+            .unwrap();
     }
 
-    let ordered_ops = if let BeastState::Counting { operations, .. } = machine.state() {
+    let ordered_ops = if let BeastState::Counting { operations, .. } = ordered_machine.state() {
         operations.clone()
     } else {
         vec![]
     };
 
-    // Create another FSM and process in reverse order
-    let mut machine2 = FsmBuilder::<BeastState, BeastEvent, BeastContext, BeastAction>::new(
-        BeastState::Counting {
-            balance: 0,
-            operations: vec![],
-            operation_ids: std::collections::HashSet::new(),
-        },
-    )
-    .when("Counting")
-    .on(
-        "Append",
-        |state, event: &BeastEvent, _ctx: &mut BeastContext| {
-            let state = state.clone();
-            let event = event.clone();
-            Box::pin(async move {
-                if let (
-                    BeastState::Counting {
-                        balance,
-                        mut operations,
-                        operation_ids,
-                    },
-                    BeastEvent::Append { value, .. },
-                ) = (state, event)
-                {
-                    operations.push(value);
-                    Ok(Transition {
-                        next_state: BeastState::Counting {
-                            balance,
-                            operations,
-                            operation_ids,
-                        },
-                        actions: vec![],
-                    })
-                } else {
-                    unreachable!()
-                }
-            })
-        },
-    )
-    .done()
-    .build();
+    assert_eq!(
+        ordered_ops,
+        vec![
+            "First".to_string(),
+            "Second".to_string(),
+            "Third".to_string()
+        ]
+    );
 
     // Process in reverse order
+    let mut reversed_machine = build_append_machine();
     for event in append_events.iter().rev() {
-        machine2.handle(event.clone(), &mut ctx).await.unwrap();
+        reversed_machine
+            .handle(event.clone(), &mut append_ctx)
+            .await
+            .unwrap();
     }
 
-    let reversed_ops = if let BeastState::Counting { operations, .. } = machine2.state() {
+    let reversed_ops = if let BeastState::Counting { operations, .. } = reversed_machine.state() {
         operations.clone()
     } else {
         vec![]
     };
 
+    assert_eq!(
+        reversed_ops,
+        vec![
+            "Third".to_string(),
+            "Second".to_string(),
+            "First".to_string()
+        ]
+    );
     assert_ne!(
         ordered_ops, reversed_ops,
         "Operations are commutative when they shouldn't be!"
     );
 
-    // Trial 3: Non-associative regrouping
+    // Trial 3: Regrouping
     //
-    // Sequential application is left-associated: (100 - 10) - 5 = 85.
-    // A batching layer that combines deltas as 10 - 5 first would apply
-    // 100 - (10 - 5) = 95. That regrouping is invalid for subtraction.
-    let mut left_associated = build_subtract_machine(100);
-    left_associated
+    // Debit/subtract events are safe to batch when their payloads are combined by addition.
+    // Sequential: (100 - 10) - 5 = 85.
+    // Batched:    100 - (10 + 5) = 85.
+    let mut sequential_debits = build_subtract_machine(100);
+    sequential_debits
         .handle(
             BeastEvent::Subtract {
-                id: "left_a".to_string(),
+                id: "sequential_a".to_string(),
                 value: 10,
             },
             &mut ctx,
         )
         .await
         .unwrap();
-    left_associated
+    sequential_debits
         .handle(
             BeastEvent::Subtract {
-                id: "left_b".to_string(),
+                id: "sequential_b".to_string(),
                 value: 5,
             },
             &mut ctx,
@@ -548,32 +648,88 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         .await
         .unwrap();
 
-    let grouped_delta = 10_i64.saturating_sub(5);
-    let mut right_grouped = build_subtract_machine(100);
-    right_grouped
+    let batched_delta = 10_i64.saturating_add(5);
+    let mut batched_debit = build_subtract_machine(100);
+    batched_debit
         .handle(
             BeastEvent::Subtract {
-                id: "right_grouped".to_string(),
-                value: grouped_delta,
+                id: "batched".to_string(),
+                value: batched_delta,
             },
             &mut ctx,
         )
         .await
         .unwrap();
 
-    let left_balance = balance_of(left_associated.state());
-    let right_balance = balance_of(right_grouped.state());
+    let sequential_balance = balance_of(sequential_debits.state());
+    let batched_balance = balance_of(batched_debit.state());
 
-    assert_eq!(left_balance, 85);
-    assert_eq!(right_balance, 95);
+    assert_eq!(sequential_balance, 85);
+    assert_eq!(batched_balance, 85);
+    assert_eq!(
+        sequential_balance, batched_balance,
+        "Debit regrouping must combine deltas by addition"
+    );
+
+    // A genuinely non-associative combine: naive averaging of partial averages.
+    // This loses the count carried by each partial, so regrouping changes the result.
+    let mut left_associated_average = build_naive_average_machine(100);
+    left_associated_average
+        .handle(
+            BeastEvent::NaiveAverage {
+                id: "avg_a".to_string(),
+                value: 10,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+    left_associated_average
+        .handle(
+            BeastEvent::NaiveAverage {
+                id: "avg_b".to_string(),
+                value: 5,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+
+    let grouped_average = naive_average(10, 5);
+    let mut right_grouped_average = build_naive_average_machine(100);
+    right_grouped_average
+        .handle(
+            BeastEvent::NaiveAverage {
+                id: "avg_grouped".to_string(),
+                value: grouped_average,
+            },
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+
+    let left_average = balance_of(left_associated_average.state());
+    let right_average = balance_of(right_grouped_average.state());
+
+    assert_eq!(left_average, 30);
+    assert_eq!(right_average, 53);
     assert_ne!(
-        left_balance, right_balance,
-        "Subtraction was treated as associative; regrouped deltas changed no state"
+        left_average, right_average,
+        "Naive averaging was treated as associative; regrouped partials changed no state"
+    );
+
+    // Saturating arithmetic has its own boundary behaviour. The small-value debit example above
+    // is batchable, but saturation can still make mixed updates order-dependent at the edge.
+    let credit_then_debit = i64::MAX.saturating_add(10).saturating_sub(10);
+    let debit_then_credit = i64::MAX.saturating_sub(10).saturating_add(10);
+    assert_ne!(
+        credit_then_debit, debit_then_credit,
+        "Saturating arithmetic boundaries should remain visible in this harness"
     );
 
     // Trial 4: The Number of the Beast
 
-    // Send exactly 566 more credits to reach 666 from 1000
+    // Send debits until the mid-loop mark check reaches 666 from 1000.
     for i in 0..566 {
         let event = BeastEvent::Debit {
             id: format!("debit_{i}"),
