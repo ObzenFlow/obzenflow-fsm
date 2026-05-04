@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Corrected Circle 4's mathematical-property harness: idempotence now depends on in-state operation IDs, append ordering is compared from equivalent initial states, debit batching uses additive deltas, and the non-associative regrouping example now uses naive partial averages.
+- Corrected Circle 4's mathematical-property harness: idempotence now depends on in-state operation IDs, duplicate credits suppress downstream actions, append ordering is compared from equivalent initial states, debit batching uses additive deltas, and the non-associative regrouping example now uses naive partial averages.
 
 ## [0.3.3] - 2026-05-02
 

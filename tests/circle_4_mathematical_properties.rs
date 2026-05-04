@@ -93,13 +93,12 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
     #[derive(Clone, Debug, PartialEq)]
     enum BeastAction {
         RecordOperation(String),
-        AlertDuplicate(String),
         ApocalypseNow,
     }
 
     #[derive(Clone)]
     struct BeastContext {
-        // Count duplicates
+        // Count duplicate delivery attempts as local telemetry only.
         duplicate_count: Arc<AtomicUsize>,
         // Track operation order for non-commutative ops
         operation_log: Arc<RwLock<Vec<(String, String)>>>,
@@ -125,10 +124,6 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                         .write()
                         .await
                         .push((op.clone(), "executed".to_string()));
-                    Ok(())
-                }
-                BeastAction::AlertDuplicate(_event_id) => {
-                    ctx.duplicate_count.fetch_add(1, Ordering::Relaxed);
                     Ok(())
                 }
                 BeastAction::ApocalypseNow => {
@@ -310,14 +305,15 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
                     if operation_ids.contains(&id) {
                         ctx.duplicate_count.fetch_add(1, Ordering::Relaxed);
 
-                        // Already processed, ignore.
+                        // Already processed: preserve state idempotence and suppress downstream
+                        // actions. The counter is local delivery-attempt telemetry only.
                         return Ok(Transition {
                             next_state: BeastState::Counting {
                                 balance,
                                 operations,
                                 operation_ids,
                             },
-                            actions: vec![BeastAction::AlertDuplicate(id)],
+                            actions: vec![],
                         });
                     }
 
@@ -545,10 +541,7 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
             "expected processed operation ID to remain in FSM state"
         );
     }
-    assert_eq!(
-        replay_actions,
-        vec![BeastAction::AlertDuplicate("credit_0".to_string())]
-    );
+    assert!(replay_actions.is_empty());
     assert_eq!(replay_ctx.duplicate_count.load(Ordering::Relaxed), 1);
 
     // Trial 2: Non-commutative operations
