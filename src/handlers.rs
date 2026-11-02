@@ -5,7 +5,7 @@
 //! Handler type aliases for FSM callbacks.
 //!
 //! Most users will never name these types directly; they are exposed for advanced use cases and
-//! for the legacy builder API / macro expansion.
+//! for the macro expansion.
 
 use std::sync::Arc;
 

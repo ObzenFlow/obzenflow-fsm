@@ -6,7 +6,6 @@
 //! It includes examples that would fail to compile if uncommented
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, FsmError, StateVariant, Transition};

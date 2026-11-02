@@ -38,6 +38,19 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
         exit,
     } in &spec.states
     {
+        // Use the final path segment as the state name.
+        let state_ident = state_path
+            .path
+            .segments
+            .last()
+            .expect("state path has at least one segment")
+            .ident
+            .to_string();
+        let state_lit = LitStr::new(&state_ident, state_path.path.span());
+        stmts.extend(quote! {
+            let _: fn(&#state_ty) -> bool = |state| ::core::matches!(state, #state_path { .. });
+        });
+
         // Build the `.on(...)` chain for this state.
         let mut on_chain: TokenStream = TokenStream::new();
         for OnHandler {
@@ -55,21 +68,14 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
                 .to_string();
             let lit = LitStr::new(&ident, event_path.path.span());
             let event_name_expr = quote! { #lit };
+            stmts.extend(quote! {
+                let _: fn(&#event_ty) -> bool = |event| ::core::matches!(event, #event_path { .. });
+            });
 
             on_chain.extend(quote! {
                 .on(#event_name_expr, #handler)
             });
         }
-
-        // Use the final path segment as the state name.
-        let state_ident = state_path
-            .path
-            .segments
-            .last()
-            .expect("state path has at least one segment")
-            .ident
-            .to_string();
-        let state_lit = LitStr::new(&state_ident, state_path.path.span());
 
         // Optional timeout chain: `.timeout(duration, handler)` after `.when`.
         let timeout_chain: TokenStream = if let Some(TimeoutSpec { duration, handler }) = timeout {
@@ -105,10 +111,7 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
     }
 
     quote! {{
-        #[allow(deprecated)]
-        {
-            #stmts
-            builder.build()
-        }
+        #stmts
+        builder.build()
     }}
 }

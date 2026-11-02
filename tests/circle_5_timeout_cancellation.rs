@@ -23,7 +23,6 @@
 //! - "Beg for meat, get meat, no more hungry" - but NEVER drop the meat
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;

@@ -4,8 +4,6 @@
 
 //! Simple tests that demonstrate core FSM functionality
 
-#![allow(deprecated)]
-
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::sync::Arc;

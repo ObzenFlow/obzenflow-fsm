@@ -1,0 +1,14 @@
+error[E0599]: no variant named `Opne` found for enum `DoorEvent`
+  --> tests/compile_fail/missing_event_variant.rs:43:27
+   |
+14 | enum DoorEvent {
+   | -------------- variant `Opne` not found here
+...
+43 |             on DoorEvent::Opne => |_: &Door, _: &DoorEvent, _: &mut DoorContext| {
+   |                           ^^^^
+   |
+help: there is a variant with a similar name
+   |
+43 -             on DoorEvent::Opne => |_: &Door, _: &DoorEvent, _: &mut DoorContext| {
+43 +             on DoorEvent::Open => |_: &Door, _: &DoorEvent, _: &mut DoorContext| {
+   |

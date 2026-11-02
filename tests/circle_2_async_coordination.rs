@@ -35,8 +35,6 @@
 //! - Tests our ability to handle complex inter-FSM communication
 //! - Proves the FSM can maintain order even when demons attack from multiple angles
 
-#![allow(deprecated)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -291,7 +289,7 @@ async fn test_2_async_coordination_nightmare() {
 
                         // Signal all stages to start
                         let stage_txs = ctx.stage_txs.read().await;
-                        for (_, tx) in stage_txs.iter() {
+                        for tx in stage_txs.values() {
                             let _ = tx.send(StageEvent::StartProcessing).await;
                         }
 

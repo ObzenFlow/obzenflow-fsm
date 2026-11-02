@@ -29,7 +29,6 @@
 //! - Tests if our FSM design exposes or hides these issues
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;

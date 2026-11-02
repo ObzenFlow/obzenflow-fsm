@@ -6,7 +6,6 @@
 //!
 //! These tests push edge cases and verify compile-time safety
 
-#![allow(deprecated)]
 #![allow(dead_code)]
 
 use async_trait::async_trait;

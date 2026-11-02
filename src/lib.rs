@@ -194,6 +194,9 @@
 //! }
 //! ```
 //!
+//! Handlers can build the [`Transition`] they return with the helpers in [`transitions`]:
+//! `goto`, `goto_with_actions`, `stay` and `stay_with_actions`.
+//!
 //! The rest of this page focuses on the patterns used to run FSMs inside an async runtime.
 //!
 //! ## Supervisor / host loop pattern
@@ -366,6 +369,9 @@
 //! Transitions are looked up by `(state.variant_name(), event.variant_name())`. For enums, the
 //! recommended approach is to derive these traits:
 //! `#[derive(obzenflow_fsm::StateVariant, obzenflow_fsm::EventVariant)]`.
+//!
+//! `fsm!` also names each `state` block's and `on` row's variant as a pattern, so a variant its
+//! enum does not have fails to compile at that block or row.
 
 // Allow this crate to refer to itself via `obzenflow_fsm` so that
 // proc-macro expansions using `::obzenflow_fsm::...` also work in
@@ -373,10 +379,11 @@
 extern crate self as obzenflow_fsm;
 
 // Module declarations
-pub mod builder;
+mod builder;
 pub mod error;
 pub mod handlers;
 pub mod machine;
+pub mod transitions;
 pub mod types;
 
 // Re-export main types for convenience
@@ -394,7 +401,6 @@ pub use handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 /// signalling that the underlying types are implementation details.
 #[doc(hidden)]
 pub mod internal {
-    #[allow(deprecated)]
     pub use crate::builder::FsmBuilder;
 }
 

@@ -119,9 +119,10 @@ pub fn derive_event_variant(input: TokenStream) -> TokenStream {
 /// - `on_entry` / `on_exit` handlers take `(&State, &mut Context)` and return `Vec<Action>`.
 /// - `unhandled` handlers take `(&State, &Event, &mut Context)` and return `()`.
 ///
-/// The macro currently expands to a legacy `FsmBuilder` pipeline ending in `.build()`.
-/// As a result, dispatch is performed by `StateVariant::variant_name()` and
-/// `EventVariant::variant_name()` (not by full type paths).
+/// The macro expands to the library's builder, ending in `.build()`. Dispatch is performed by
+/// `StateVariant::variant_name()` and `EventVariant::variant_name()`. Each `state` block and
+/// `on` row also names its variant as a pattern, so a variant its enum does not have fails to
+/// compile at that block or row.
 ///
 /// ```rust,ignore
 /// use obzenflow_fsm::{fsm, Transition};

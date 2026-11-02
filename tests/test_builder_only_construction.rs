@@ -5,8 +5,6 @@
 //! Test to ensure StateMachine can only be created through the builder
 //! This test will fail to compile if StateMachine::new becomes public
 
-#![allow(deprecated)]
-
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 

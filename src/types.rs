@@ -207,7 +207,7 @@ pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
 
 /// A boxed `Send` future.
 ///
-/// This is primarily used by the legacy builder API and the `fsm!` macro expansion.
+/// This is primarily used by the `fsm!` macro expansion.
 pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 /// Result type used by handlers and actions.

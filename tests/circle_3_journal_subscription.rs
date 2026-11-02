@@ -22,7 +22,6 @@
 //! - Proves the journal can maintain order even when everyone speaks at once
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;

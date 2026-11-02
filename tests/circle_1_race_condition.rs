@@ -12,7 +12,7 @@
 //!
 //! God's Divine Defense:
 //! - Arc<Context> provides holy thread-safe sharing
-//! - fetch_update with checked_sub prevents underflow (no negative demons allowed!)
+//! - try_update with checked_sub prevents underflow (no negative demons allowed!)
 //! - SeqCst ordering maintains causality (even Satan must obey physics)
 //! - The barrier ensures all demons reach hell before we verify the count
 //!
@@ -25,8 +25,6 @@
 //! Why it matters:
 //! - This is how stages track in-flight events during drain
 //! - If our Arc<Context> pattern can't handle this, we're doomed (literally)
-
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
@@ -205,7 +203,7 @@ async fn test_race_condition_from_hell() {
                         // Simulate in-flight decrement with underflow protection
                         let old =
                             ctx.in_flight
-                                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                                .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
                                     v.checked_sub(1)
                                 });
 

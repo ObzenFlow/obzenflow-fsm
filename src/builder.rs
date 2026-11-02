@@ -2,19 +2,6 @@
 // SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
 // https://obzenflow.dev
 
-//! Legacy fluent builder API (string-dispatched).
-//!
-//! Most users should use the typed [`crate::fsm!`] DSL instead.
-//!
-//! This module is retained for two reasons:
-//! 1) Backwards compatibility with older code that used `FsmBuilder` directly.
-//! 2) As an implementation detail of the current `fsm!` macro expansion.
-//!
-//! The builder stores handlers in a map keyed by `(state_name, event_name)` where both names are
-//! provided as strings. The typed DSL derives these strings from enum variant identifiers.
-
-#![allow(deprecated)]
-
 use crate::handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 use crate::machine::StateMachine;
 use crate::types::{
@@ -28,15 +15,9 @@ use tokio::time::Duration;
 type UnhandledHandler<S, E, C> =
     Arc<dyn for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<()>> + Send + Sync>;
 
-/// Main builder for creating FSMs.
+/// String-keyed builder that `fsm!` expands to.
 ///
-/// This type is now considered an internal implementation detail of the
-/// `fsm!` macro. New code should use the typed DSL (`fsm!`) instead of
-/// constructing FSMs directly via `FsmBuilder`.
-#[deprecated(
-    since = "0.3.0",
-    note = "Use the `fsm!` macro from obzenflow_fsm instead; FsmBuilder is now an internal implementation detail used by the macro expansion."
-)]
+/// Reachable only through the hidden `internal` path, with no stability promise.
 pub struct FsmBuilder<S, E, C, A> {
     initial_state: S,
     transitions: HashMap<(String, String), TransitionHandler<S, E, C, A>>,
@@ -90,10 +71,6 @@ where
     }
 
     /// Start defining behavior for a specific state name.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL instead of string-based state names. This method will become crate-private in a future release."
-    )]
     pub fn when(self, state_name: &str) -> WhenBuilder<S, E, C, A> {
         WhenBuilder {
             builder: self,
@@ -102,10 +79,6 @@ where
     }
 
     /// Define behavior for any state (wildcard state name `"_"`).
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL instead of from_any(). This method will become crate-private in a future release."
-    )]
     pub fn from_any(self) -> WhenBuilder<S, E, C, A> {
         WhenBuilder {
             builder: self,
@@ -129,10 +102,6 @@ where
     }
 
     /// Define an entry handler for a state.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL with on_entry blocks instead of string-based on_entry(). This method will become crate-private in a future release."
-    )]
     pub fn on_entry<F>(mut self, state_name: &str, handler: F) -> Self
     where
         F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
@@ -143,10 +112,6 @@ where
     }
 
     /// Define an exit handler for a state.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL with on_exit blocks instead of string-based on_exit(). This method will become crate-private in a future release."
-    )]
     pub fn on_exit<F>(mut self, state_name: &str, handler: F) -> Self
     where
         F: for<'a> Fn(&'a S, &'a mut C) -> BoxFuture<'a, FsmResult<Vec<A>>> + Send + Sync + 'static,
@@ -206,7 +171,7 @@ where
     }
 }
 
-/// Builder for defining state-specific behavior (legacy builder API).
+/// Builder for defining state-specific behavior.
 pub struct WhenBuilder<S, E, C, A> {
     builder: FsmBuilder<S, E, C, A>,
     state_name: String,
@@ -220,10 +185,6 @@ where
     A: FsmAction<Context = C> + 'static,
 {
     /// Define a transition for a specific event name.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL with `on Event::Variant => { … }` instead of string-based event names. This method will become crate-private in a future release."
-    )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
         F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
@@ -268,7 +229,7 @@ where
     }
 }
 
-/// Builder for states with timeouts (legacy builder API).
+/// Builder for states with timeouts.
 pub struct TimeoutBuilder<S, E, C, A> {
     builder: FsmBuilder<S, E, C, A>,
     state_name: String,
@@ -282,10 +243,6 @@ where
     A: FsmAction<Context = C> + 'static,
 {
     /// Define a transition for a specific event name.
-    #[deprecated(
-        since = "0.3.0",
-        note = "Use the typed fsm! DSL instead of string-based event names. This method will become crate-private in a future release."
-    )]
     pub fn on<F>(mut self, event_name: &str, handler: F) -> Self
     where
         F: for<'a> Fn(&'a S, &'a E, &'a mut C) -> BoxFuture<'a, FsmResult<Transition<S, A>>>
@@ -303,45 +260,6 @@ where
     /// Return to the main builder
     pub fn done(self) -> FsmBuilder<S, E, C, A> {
         self.builder
-    }
-}
-
-/// Convenience constructors for [`crate::Transition`].
-///
-/// These are primarily useful when writing handlers outside of the `fsm!` DSL.
-pub mod transitions {
-    use crate::Transition;
-
-    /// Transition to a new state (no actions).
-    pub fn goto<S, A>(state: S) -> Transition<S, A> {
-        Transition {
-            next_state: state,
-            actions: vec![],
-        }
-    }
-
-    /// Transition to a new state with actions.
-    pub fn goto_with_actions<S, A>(state: S, actions: Vec<A>) -> Transition<S, A> {
-        Transition {
-            next_state: state,
-            actions,
-        }
-    }
-
-    /// Stay in the current state (no actions).
-    pub fn stay<S: Clone, A>(current_state: &S) -> Transition<S, A> {
-        Transition {
-            next_state: current_state.clone(),
-            actions: vec![],
-        }
-    }
-
-    /// Stay in the current state with actions.
-    pub fn stay_with_actions<S: Clone, A>(current_state: &S, actions: Vec<A>) -> Transition<S, A> {
-        Transition {
-            next_state: current_state.clone(),
-            actions,
-        }
     }
 }
 

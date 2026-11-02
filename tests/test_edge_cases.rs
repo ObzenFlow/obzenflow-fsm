@@ -7,7 +7,6 @@
 //! These tests push the FSM to its limits with extreme scenarios
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};

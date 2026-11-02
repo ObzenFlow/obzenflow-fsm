@@ -29,7 +29,6 @@
 //! - The 666th line should be in this test (if we reach it)
 
 #![allow(dead_code)]
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;

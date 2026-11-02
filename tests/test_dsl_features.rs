@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2025-2026 ObzenFlow Contributors
 // https://obzenflow.dev
 
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
 use obzenflow_fsm::{
-    fsm, EventVariant, FsmAction, FsmContext, StateMachine, StateVariant, Transition,
+    fsm, transitions, EventVariant, FsmAction, FsmContext, StateMachine, StateVariant, Transition,
 };
 use tokio::sync::RwLock;
 
@@ -222,4 +223,103 @@ async fn test_dsl_timeout() {
     assert_eq!(actions.len(), 1);
     actions[0].clone().execute(&mut ctx).await.unwrap();
     assert!(matches!(machine.state(), DslState::Done));
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Slot<P> {
+    Empty,
+    Holding(P),
+    Sealed { count: u32 },
+}
+
+impl<P> StateVariant for Slot<P>
+where
+    P: Clone + Debug + PartialEq + Send + Sync + 'static,
+{
+    fn variant_name(&self) -> &str {
+        match self {
+            Slot::Empty => "Empty",
+            Slot::Holding(_) => "Holding",
+            Slot::Sealed { .. } => "Sealed",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum SlotEvent<P> {
+    Put(P),
+    Seal { count: u32 },
+}
+
+impl<P> EventVariant for SlotEvent<P>
+where
+    P: Clone + Debug + Send + Sync + 'static,
+{
+    fn variant_name(&self) -> &str {
+        match self {
+            SlotEvent::Put(_) => "Put",
+            SlotEvent::Seal { .. } => "Seal",
+        }
+    }
+}
+
+fn next_slot<P: Clone>(event: &SlotEvent<P>) -> Slot<P> {
+    match event {
+        SlotEvent::Put(value) => Slot::Holding(value.clone()),
+        SlotEvent::Seal { count } => Slot::Sealed { count: *count },
+    }
+}
+
+fn slot_machine<P>() -> StateMachine<Slot<P>, SlotEvent<P>, DslContext, DslAction>
+where
+    P: Clone + Debug + PartialEq + Send + Sync + 'static,
+{
+    fsm! {
+        state:   Slot<P>;
+        event:   SlotEvent<P>;
+        context: DslContext;
+        action:  DslAction;
+        initial: Slot::Empty;
+
+        state Slot::Empty {
+            on SlotEvent::Put => |_: &Slot<P>, event: &SlotEvent<P>, _: &mut DslContext| {
+                let next = next_slot(event);
+                Box::pin(async move { Ok(transitions::goto(next)) })
+            };
+        }
+
+        state Slot::Holding {
+            on SlotEvent::Seal => |_: &Slot<P>, event: &SlotEvent<P>, _: &mut DslContext| {
+                let next = next_slot(event);
+                Box::pin(async move { Ok(transitions::goto(next)) })
+            };
+        }
+
+        state Slot::Sealed {
+            on_entry |_: &Slot<P>, _: &mut DslContext| {
+                Box::pin(async { Ok(vec![DslAction::Log("sealed".into())]) })
+            };
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_dsl_generic_table() {
+    let mut machine = slot_machine::<String>();
+    let mut ctx = DslContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
+
+    machine
+        .handle(SlotEvent::Put("parcel".to_string()), &mut ctx)
+        .await
+        .expect("put");
+    assert_eq!(machine.state(), &Slot::Holding("parcel".to_string()));
+
+    let actions = machine
+        .handle(SlotEvent::Seal { count: 1 }, &mut ctx)
+        .await
+        .expect("seal");
+    assert_eq!(machine.state(), &Slot::Sealed { count: 1 });
+    assert_eq!(actions, vec![DslAction::Log("sealed".into())]);
 }
