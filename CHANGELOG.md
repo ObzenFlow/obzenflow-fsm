@@ -7,8 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+### Added
+- `#[derive(StateVariant)]` and `#[derive(EventVariant)]` now accept generic enums.
+- A Publish workflow releases each crate from CI, behind a pre-flight report and the `release` environment's approval, with a crates.io token minted for the run.
+- An `advisories` check runs `cargo deny check advisories` on every CI run and daily.
+
+### Changed
+- Both crates now share one version, starting at 0.4.0 (`obzenflow-fsm-macros` moves from 0.1.2), and `obzenflow-fsm` requires `obzenflow-fsm-macros` at exactly that version.
+- `fsm!` requires its state and event types to derive `StateVariant` and `EventVariant`. A hand-written impl fails to compile at the table's `state:` or `event:` line.
+- `obzenflow_fsm::builder` is no longer public. The builder is reachable only through the hidden `obzenflow_fsm::internal` path, with no stability promise, and its transition helpers moved to `obzenflow_fsm::transitions`.
+- CI uses Rust 1.99.0. Both manifests deny the Clippy lints that catch `#[allow]` and `let _` discards, and CI refuses `#[expect]`.
+
+### Removed
+- The builder's deprecation, and the `#[allow(deprecated)]` that every `fsm!` expansion carried.
+
 ### Fixed
+- `fsm!` no longer compiles a `state` block or `on` row that names a variant its enum does not have. It fails with `E0599` at that line, where before the event went unhandled at runtime.
 - Corrected Circle 4's mathematical-property harness: idempotence now depends on in-state operation IDs, duplicate credits suppress downstream actions, append ordering is compared from equivalent initial states, debit batching uses additive deltas, and the non-associative regrouping example now uses naive partial averages.
+
+### Security
+- The lockfile moves tokio to 1.54.1, past RUSTSEC-2026-0386. The published requirement is unchanged.
+
+### Migration
+- Import `goto`, `goto_with_actions`, `stay` and `stay_with_actions` from `obzenflow_fsm::transitions`.
+- Replace a hand-written `StateVariant` or `EventVariant` impl on an `fsm!` type with the derive.
+- Move code that used `obzenflow_fsm::builder` to `fsm!`.
 
 ## [0.3.3] - 2026-05-02
 
@@ -110,7 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example FSM implementations
 - Test suite demonstrating advanced patterns
 
-[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.2
 [0.3.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.1
