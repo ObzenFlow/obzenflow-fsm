@@ -13,90 +13,100 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-/// Derive `::obzenflow_fsm::StateVariant` for an enum.
+/// Derive `::obzenflow_fsm::StateVariant` for an enum, generic or not.
 ///
-/// The generated `variant_name()` matches on the enum and returns the variant identifier as a
-/// `&'static str`, ignoring any payload.
+/// The generated `variant_name()` returns the variant identifier, ignoring any payload. `fsm!`
+/// accepts only state types that derive it.
 #[proc_macro_derive(StateVariant)]
 pub fn derive_state_variant(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let enum_ident = input.ident;
-
-    let data_enum = match input.data {
-        syn::Data::Enum(e) => e,
-        _ => {
-            return syn::Error::new_spanned(
-                enum_ident,
-                "StateVariant can only be derived for enums",
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-
-    let arms = data_enum.variants.iter().map(|variant| {
-        let ident = &variant.ident;
-        match &variant.fields {
-            syn::Fields::Unit => quote! { Self::#ident => stringify!(#ident), },
-            syn::Fields::Unnamed(_) => quote! { Self::#ident(..) => stringify!(#ident), },
-            syn::Fields::Named(_) => quote! { Self::#ident { .. } => stringify!(#ident), },
-        }
-    });
-
-    let expanded = quote! {
-        impl ::obzenflow_fsm::StateVariant for #enum_ident {
-            fn variant_name(&self) -> &str {
-                match self {
-                    #( #arms )*
-                }
-            }
-        }
-    };
-
-    TokenStream::from(expanded)
+    derive_variant(
+        input,
+        quote! { ::obzenflow_fsm::StateVariant },
+        quote! { ::obzenflow_fsm::internal::DerivedStateVariant },
+        quote! {
+            ::core::clone::Clone
+                + ::core::fmt::Debug
+                + ::core::cmp::PartialEq
+                + ::core::marker::Send
+                + ::core::marker::Sync
+                + 'static
+        },
+        "StateVariant",
+    )
+    .into()
 }
 
-/// Derive `::obzenflow_fsm::EventVariant` for an enum.
+/// Derive `::obzenflow_fsm::EventVariant` for an enum, generic or not.
 ///
-/// The generated `variant_name()` matches on the enum and returns the variant identifier as a
-/// `&'static str`, ignoring any payload.
+/// The generated `variant_name()` returns the variant identifier, ignoring any payload. `fsm!`
+/// accepts only event types that derive it.
 #[proc_macro_derive(EventVariant)]
 pub fn derive_event_variant(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let enum_ident = input.ident;
+    derive_variant(
+        input,
+        quote! { ::obzenflow_fsm::EventVariant },
+        quote! { ::obzenflow_fsm::internal::DerivedEventVariant },
+        quote! {
+            ::core::clone::Clone
+                + ::core::fmt::Debug
+                + ::core::marker::Send
+                + ::core::marker::Sync
+                + 'static
+        },
+        "EventVariant",
+    )
+    .into()
+}
 
-    let data_enum = match input.data {
-        syn::Data::Enum(e) => e,
-        _ => {
-            return syn::Error::new_spanned(
-                enum_ident,
-                "EventVariant can only be derived for enums",
-            )
-            .to_compile_error()
-            .into();
-        }
+fn derive_variant(
+    input: DeriveInput,
+    trait_path: proc_macro2::TokenStream,
+    marker_path: proc_macro2::TokenStream,
+    supertraits: proc_macro2::TokenStream,
+    trait_name: &str,
+) -> proc_macro2::TokenStream {
+    let DeriveInput {
+        ident,
+        generics,
+        data,
+        ..
+    } = input;
+
+    let syn::Data::Enum(data_enum) = data else {
+        return syn::Error::new_spanned(
+            ident,
+            format!("{trait_name} can only be derived for enums"),
+        )
+        .to_compile_error();
     };
 
     let arms = data_enum.variants.iter().map(|variant| {
-        let ident = &variant.ident;
-        match &variant.fields {
-            syn::Fields::Unit => quote! { Self::#ident => stringify!(#ident), },
-            syn::Fields::Unnamed(_) => quote! { Self::#ident(..) => stringify!(#ident), },
-            syn::Fields::Named(_) => quote! { Self::#ident { .. } => stringify!(#ident), },
-        }
+        let variant_ident = &variant.ident;
+        quote! { Self::#variant_ident { .. } => ::core::stringify!(#variant_ident), }
     });
 
-    let expanded = quote! {
-        impl ::obzenflow_fsm::EventVariant for #enum_ident {
+    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+    let mut where_clause = generics.where_clause.clone();
+    if !generics.params.is_empty() {
+        where_clause
+            .get_or_insert_with(|| syn::parse_quote!(where))
+            .predicates
+            .push(syn::parse_quote!(Self: #supertraits));
+    }
+
+    quote! {
+        impl #impl_generics #trait_path for #ident #ty_generics #where_clause {
             fn variant_name(&self) -> &str {
                 match self {
                     #( #arms )*
                 }
             }
         }
-    };
 
-    TokenStream::from(expanded)
+        impl #impl_generics #marker_path for #ident #ty_generics #where_clause {}
+    }
 }
 
 /// High-level typed FSM builder DSL.
@@ -120,8 +130,9 @@ pub fn derive_event_variant(input: TokenStream) -> TokenStream {
 /// - `unhandled` handlers take `(&State, &Event, &mut Context)` and return `()`.
 ///
 /// The macro expands to the library's builder, ending in `.build()`. Dispatch is performed by
-/// `StateVariant::variant_name()` and `EventVariant::variant_name()`. Each `state` block and
-/// `on` row also names its variant as a pattern, so a variant its enum does not have fails to
+/// `StateVariant::variant_name()` and `EventVariant::variant_name()`, and the state and event
+/// types must derive both, so every name is a variant identifier. Each `state` block and `on`
+/// row also names its variant as a pattern, so a variant its enum does not have fails to
 /// compile at that block or row.
 ///
 /// ```rust,ignore

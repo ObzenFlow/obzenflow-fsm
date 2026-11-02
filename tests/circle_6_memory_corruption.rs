@@ -28,8 +28,6 @@
 //! - Proves Rust's ownership is divinely inspired
 //! - The 666th line should be in this test (if we reach it)
 
-#![allow(dead_code)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -45,9 +43,6 @@ async fn test_6_memory_corruption_gauntlet() {
     #[derive(Clone, Debug, PartialEq)]
     enum CorruptionState {
         Spawning { id: usize },
-        Corrupting { cycles: usize },
-        SelfReferencing,
-        Dying(String),
         Dead,
     }
 
@@ -55,9 +50,6 @@ async fn test_6_memory_corruption_gauntlet() {
         fn variant_name(&self) -> &str {
             match self {
                 CorruptionState::Spawning { .. } => "Spawning",
-                CorruptionState::Corrupting { .. } => "Corrupting",
-                CorruptionState::SelfReferencing => "SelfReferencing",
-                CorruptionState::Dying(_) => "Dying",
                 CorruptionState::Dead => "Dead",
             }
         }
@@ -65,20 +57,12 @@ async fn test_6_memory_corruption_gauntlet() {
 
     #[derive(Clone, Debug)]
     enum CorruptionEvent {
-        SpawnChild(usize),
-        CreateCycle,
-        CreateSelfReference,
-        AbandonAsync,
         Die,
     }
 
     impl EventVariant for CorruptionEvent {
         fn variant_name(&self) -> &str {
             match self {
-                CorruptionEvent::SpawnChild(_) => "SpawnChild",
-                CorruptionEvent::CreateCycle => "CreateCycle",
-                CorruptionEvent::CreateSelfReference => "CreateSelfReference",
-                CorruptionEvent::AbandonAsync => "AbandonAsync",
                 CorruptionEvent::Die => "Die",
             }
         }
@@ -86,9 +70,6 @@ async fn test_6_memory_corruption_gauntlet() {
 
     #[derive(Clone, Debug, PartialEq)]
     enum CorruptionAction {
-        AllocateMemory(usize),
-        SpawnTask,
-        CreateReference,
         Cleanup,
     }
 
@@ -109,7 +90,6 @@ async fn test_6_memory_corruption_gauntlet() {
 
         // Tracking for verification
         id: usize,
-        creation_count: Arc<AtomicUsize>,
         drop_count: Arc<AtomicUsize>,
     }
 
@@ -127,20 +107,8 @@ async fn test_6_memory_corruption_gauntlet() {
     impl FsmAction for CorruptionAction {
         type Context = CorruptionContext;
 
-        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
+        async fn execute(&self, _: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
-                CorruptionAction::AllocateMemory(size) => {
-                    ctx.allocated_memory.fetch_add(*size, Ordering::Relaxed);
-                    Ok(())
-                }
-                CorruptionAction::SpawnTask => {
-                    // Spawn task
-                    Ok(())
-                }
-                CorruptionAction::CreateReference => {
-                    // Create reference
-                    Ok(())
-                }
                 CorruptionAction::Cleanup => {
                     // Cleanup
                     Ok(())
@@ -162,7 +130,6 @@ async fn test_6_memory_corruption_gauntlet() {
                 allocated_memory: Arc::new(AtomicUsize::new(0)),
                 active_tasks: Arc::new(RwLock::new(Vec::new())),
                 id,
-                creation_count,
                 drop_count: drop_count.clone(),
             }
         }
@@ -175,7 +142,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
             // Even worse: send self through channel creating more refs
             if let Some(tx) = &*self.self_sender.read().await {
-                let _ = tx.send(self.clone()).await;
+                tx.send(self.clone()).await.expect("self receiver held");
             }
         }
 
@@ -254,9 +221,6 @@ async fn test_6_memory_corruption_gauntlet() {
     // === TRIAL 2: The Abandoned Async Tasks ===
     // Trial 2: The Abandoned Async Tasks
 
-    let task_creation_count = Arc::new(AtomicUsize::new(0));
-    let task_completion_count = Arc::new(AtomicUsize::new(0));
-
     {
         let ctx = Arc::new(CorruptionContext::new(
             666, // The beast's context
@@ -267,19 +231,13 @@ async fn test_6_memory_corruption_gauntlet() {
         // Spawn tasks that hold Arc references
         for _ in 0..100 {
             let ctx_clone = ctx.clone();
-            let task_creation = task_creation_count.clone();
-            let task_completion = task_completion_count.clone();
 
             let handle = tokio::spawn(async move {
-                task_creation.fetch_add(1, Ordering::SeqCst);
-
                 // Hold the context reference
                 let _ctx = ctx_clone;
 
                 // Simulate work
                 sleep(Duration::from_millis(50)).await;
-
-                task_completion.fetch_add(1, Ordering::SeqCst);
             });
 
             ctx.active_tasks.write().await.push(handle);
@@ -293,11 +251,6 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Wait for tasks to complete or abort
     sleep(Duration::from_millis(100)).await;
-
-    let created_tasks = task_creation_count.load(Ordering::SeqCst);
-    let completed_tasks = task_completion_count.load(Ordering::SeqCst);
-    // Some tasks may not complete due to being dropped, but that's fine
-    let _ = (created_tasks, completed_tasks);
 
     // === TRIAL 3: The FSM Apocalypse (Mass Spawn/Kill) ===
     // Trial 3: The FSM Apocalypse (Mass Spawn/Kill)
@@ -359,7 +312,9 @@ async fn test_6_memory_corruption_gauntlet() {
             sleep(Duration::from_millis(rand::random::<u64>() % 100)).await;
 
             // Die
-            let _ = fsm.handle(CorruptionEvent::Die, &mut ctx).await;
+            fsm.handle(CorruptionEvent::Die, &mut ctx)
+                .await
+                .expect("die");
 
             death_count_clone.fetch_add(1, Ordering::SeqCst);
         });
@@ -376,7 +331,7 @@ async fn test_6_memory_corruption_gauntlet() {
 
     // Wait for all FSMs to complete or abort
     for handle in fsm_handles {
-        let _ = handle.await;
+        handle.await.expect("FSM task completes");
     }
 
     let _spawned = fsm_count.load(Ordering::SeqCst);
@@ -405,9 +360,11 @@ async fn test_6_memory_corruption_gauntlet() {
     // Create self-reference through channel
     if let Some(tx) = &*nightmare_ctx.self_sender.read().await {
         // Send self through own channel!
-        let _ = tx.send(nightmare_ctx.clone()).await;
-        let _ = tx.send(nightmare_ctx.clone()).await;
-        let _ = tx.send(nightmare_ctx.clone()).await;
+        for _ in 0..3 {
+            tx.send(nightmare_ctx.clone())
+                .await
+                .expect("self receiver held");
+        }
     }
 
     // Verify self-references exist

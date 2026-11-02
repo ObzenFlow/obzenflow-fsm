@@ -156,6 +156,9 @@ jobs:
         run: cargo fetch --locked
       - uses: Swatinem/rust-cache@v2
 
+      - name: Verify no lint expectations
+        run: "! git grep -nE '#!?\\[expect\\(' -- '*.rs'"
+
       - name: Verify SPDX headers
         run: |
           python3 - <<'PY'
@@ -201,7 +204,10 @@ jobs:
           tool: cargo-machete
 
       - name: cargo-deny
-        run: cargo deny --all-features check
+        run: cargo deny --all-features check bans licenses sources
 
       - name: cargo-machete
         run: cargo machete --skip-target-dir
+
+  advisories:
+    uses: ./.github/workflows/advisories.yml

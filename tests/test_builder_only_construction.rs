@@ -134,5 +134,5 @@ fn test_builder_only_construction_documentation() {
     assert_eq!(event.variant_name(), "Go");
 
     let action = TestAction::DoSomething;
-    let _ = action.describe();
+    assert_eq!(action.describe(), "DoSomething");
 }

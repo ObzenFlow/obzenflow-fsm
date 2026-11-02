@@ -6,8 +6,6 @@
 //!
 //! These tests push the FSM to its limits with extreme scenarios
 
-#![allow(dead_code)]
-
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::collections::HashMap;
@@ -43,14 +41,14 @@ impl StateVariant for NestedState {
 #[derive(Clone, Debug)]
 enum NestedEvent {
     Transform,
-    Mutate { key: String, value: String },
+    Mutate,
 }
 
 impl EventVariant for NestedEvent {
     fn variant_name(&self) -> &str {
         match self {
             NestedEvent::Transform => "Transform",
-            NestedEvent::Mutate { .. } => "Mutate",
+            NestedEvent::Mutate => "Mutate",
         }
     }
 }
@@ -145,16 +143,7 @@ async fn test_deeply_nested_state() {
         assert_eq!(matrix[0][0], vec![1, 2, 3]); // Now u32 values
 
         // Mutate doesn't apply to Level2 anymore since we removed metadata
-        machine
-            .handle(
-                NestedEvent::Mutate {
-                    key: "test".to_string(),
-                    value: "value".to_string(),
-                },
-                &mut ctx,
-            )
-            .await
-            .unwrap();
+        machine.handle(NestedEvent::Mutate, &mut ctx).await.unwrap();
     } else {
         panic!("Expected Level2 state");
     }
@@ -616,6 +605,15 @@ async fn test_state_equality_edge_cases() {
         .await
         .unwrap();
     assert_eq!(actions.len(), 1); // Actions still execute even if state doesn't change
+
+    machine
+        .handle(FloatEvent::MakeInfinity, &mut ctx)
+        .await
+        .unwrap();
+    assert!(matches!(
+        machine.state(),
+        FloatState::WithInfinity { value } if value.is_infinite()
+    ));
 }
 
 /// Test with extremely large numbers of states
@@ -656,7 +654,6 @@ async fn test_many_states() {
     #[derive(Clone, Debug)]
     enum ManyEvents {
         Next,
-        JumpTo(u8),
         Reset,
     }
 
@@ -664,7 +661,6 @@ async fn test_many_states() {
         fn variant_name(&self) -> &str {
             match self {
                 ManyEvents::Next => "Next",
-                ManyEvents::JumpTo(_) => "JumpTo",
                 ManyEvents::Reset => "Reset",
             }
         }

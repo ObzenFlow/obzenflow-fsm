@@ -6,32 +6,15 @@ use obzenflow_fsm::{
     fsm, EventVariant, FsmAction, FsmContext, StateMachine, StateVariant, Transition,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, StateVariant)]
 enum SimpleState {
     Idle,
     Running,
 }
 
-impl StateVariant for SimpleState {
-    fn variant_name(&self) -> &str {
-        match self {
-            SimpleState::Idle => "Idle",
-            SimpleState::Running => "Running",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EventVariant)]
 enum SimpleEvent {
     Start,
-}
-
-impl EventVariant for SimpleEvent {
-    fn variant_name(&self) -> &str {
-        match self {
-            SimpleEvent::Start => "Start",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

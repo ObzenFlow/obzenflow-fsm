@@ -4,7 +4,7 @@
 
 * Deterministic transitions: `(State, Event, Context) -> (State', Actions)`
 * Single-owner mutable context API (`&mut Context`)
-* Typed DSL (`fsm!`) plus optional derive helpers
+* Typed DSL (`fsm!`) plus the derives it requires
 * Timeouts, entry/exit hooks, wildcard/unhandled handling
 * Structured errors (`FsmError`) and strict builder validation
 

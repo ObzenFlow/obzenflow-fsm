@@ -5,8 +5,6 @@
 //! This test file demonstrates that StateMachine can only be created via FsmBuilder
 //! It includes examples that would fail to compile if uncommented
 
-#![allow(dead_code)]
-
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, FsmError, StateVariant, Transition};
 
@@ -60,27 +58,33 @@ impl FsmAction for DemoAction {
     }
 }
 
-#[test]
-fn test_fsm_works_via_builder() {
+#[tokio::test]
+async fn test_fsm_works_via_builder() {
     // This is the correct way: use `FsmBuilder`.
-    let fsm = FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
-        .when("Start")
-        .on(
-            "Finish",
-            |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
-                Box::pin(async {
-                    Ok(Transition {
-                        next_state: DemoState::End,
-                        actions: vec![],
+    let mut fsm =
+        FsmBuilder::<DemoState, DemoEvent, DemoContext, DemoAction>::new(DemoState::Start)
+            .when("Start")
+            .on(
+                "Finish",
+                |_state, _event: &DemoEvent, _ctx: &mut DemoContext| {
+                    Box::pin(async {
+                        Ok(Transition {
+                            next_state: DemoState::End,
+                            actions: vec![],
+                        })
                     })
-                })
-            },
-        )
-        .done()
-        .build();
+                },
+            )
+            .done()
+            .build();
 
     // Verify the FSM was created successfully
     assert!(matches!(fsm.state(), DemoState::Start));
+
+    fsm.handle(DemoEvent::Finish, &mut DemoContext)
+        .await
+        .expect("finish");
+    assert!(matches!(fsm.state(), DemoState::End));
 }
 
 // The following examples demonstrate what CANNOT be done:

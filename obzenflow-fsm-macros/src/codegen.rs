@@ -3,7 +3,7 @@
 // https://obzenflow.dev
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, LitStr};
 
 use crate::parse::{FsmSpec, OnHandler, StateBlock, TimeoutSpec};
@@ -20,9 +20,15 @@ pub fn expand_fsm_spec(spec: &FsmSpec) -> TokenStream {
     // - Applies optional top-level `unhandled` handler,
     // - Applies each state's entry/exit/timeout/on clauses,
     // - Finishes with `builder.build()`.
-    let mut stmts: TokenStream = quote! {
-        let mut builder = ::obzenflow_fsm::internal::FsmBuilder::<#state_ty, #event_ty, #context_ty, #action_ty>::new(#initial_expr);
+    let mut stmts: TokenStream = quote_spanned! {state_ty.span()=>
+        ::obzenflow_fsm::internal::require_derived_state::<#state_ty>();
     };
+    stmts.extend(quote_spanned! {event_ty.span()=>
+        ::obzenflow_fsm::internal::require_derived_event::<#event_ty>();
+    });
+    stmts.extend(quote! {
+        let mut builder = ::obzenflow_fsm::internal::FsmBuilder::<#state_ty, #event_ty, #context_ty, #action_ty>::new(#initial_expr);
+    });
 
     if let Some(unhandled) = &spec.unhandled {
         stmts.extend(quote! {

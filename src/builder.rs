@@ -267,40 +267,19 @@ where
 mod tests {
     use super::*;
 
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq, crate::StateVariant)]
     enum DoorState {
         Closed,
         Open { since: std::time::Instant },
         Locked,
     }
 
-    impl StateVariant for DoorState {
-        fn variant_name(&self) -> &str {
-            match self {
-                DoorState::Closed => "Closed",
-                DoorState::Open { .. } => "Open",
-                DoorState::Locked => "Locked",
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, crate::EventVariant)]
     enum DoorEvent {
         Open,
         Close,
         Lock,
         Unlock,
-    }
-
-    impl EventVariant for DoorEvent {
-        fn variant_name(&self) -> &str {
-            match self {
-                DoorEvent::Open => "Open",
-                DoorEvent::Close => "Close",
-                DoorEvent::Lock => "Lock",
-                DoorEvent::Unlock => "Unlock",
-            }
-        }
     }
 
     #[derive(Clone, Debug, PartialEq)]

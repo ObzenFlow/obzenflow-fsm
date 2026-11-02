@@ -3,6 +3,7 @@
 // https://obzenflow.dev
 
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,38 +12,18 @@ use obzenflow_fsm::{
 };
 use tokio::sync::RwLock;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, StateVariant)]
 enum DslState {
     Idle,
     Working,
     Done,
 }
 
-impl StateVariant for DslState {
-    fn variant_name(&self) -> &str {
-        match self {
-            DslState::Idle => "Idle",
-            DslState::Working => "Working",
-            DslState::Done => "Done",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EventVariant)]
 enum DslEvent {
     Start,
     Finish,
     Unknown,
-}
-
-impl EventVariant for DslEvent {
-    fn variant_name(&self) -> &str {
-        match self {
-            DslEvent::Start => "Start",
-            DslEvent::Finish => "Finish",
-            DslEvent::Unknown => "Unknown",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -225,42 +206,17 @@ async fn test_dsl_timeout() {
     assert!(matches!(machine.state(), DslState::Done));
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, StateVariant)]
 enum Slot<P> {
     Empty,
     Holding(P),
     Sealed { count: u32 },
 }
 
-impl<P> StateVariant for Slot<P>
-where
-    P: Clone + Debug + PartialEq + Send + Sync + 'static,
-{
-    fn variant_name(&self) -> &str {
-        match self {
-            Slot::Empty => "Empty",
-            Slot::Holding(_) => "Holding",
-            Slot::Sealed { .. } => "Sealed",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EventVariant)]
 enum SlotEvent<P> {
     Put(P),
     Seal { count: u32 },
-}
-
-impl<P> EventVariant for SlotEvent<P>
-where
-    P: Clone + Debug + Send + Sync + 'static,
-{
-    fn variant_name(&self) -> &str {
-        match self {
-            SlotEvent::Put(_) => "Put",
-            SlotEvent::Seal { .. } => "Seal",
-        }
-    }
 }
 
 fn next_slot<P: Clone>(event: &SlotEvent<P>) -> Slot<P> {
@@ -322,4 +278,99 @@ async fn test_dsl_generic_table() {
         .expect("seal");
     assert_eq!(machine.state(), &Slot::Sealed { count: 1 });
     assert_eq!(actions, vec![DslAction::Log("sealed".into())]);
+}
+
+struct OpaqueHandler;
+
+#[derive(StateVariant)]
+enum Stage<H> {
+    Created,
+    Running { seen: u64 },
+    _Phantom(PhantomData<H>),
+}
+
+impl<H> Clone for Stage<H> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Created => Self::Created,
+            Self::Running { seen } => Self::Running { seen: *seen },
+            Self::_Phantom(_) => Self::_Phantom(PhantomData),
+        }
+    }
+}
+
+impl<H> Debug for Stage<H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Created => f.write_str("Created"),
+            Self::Running { seen } => write!(f, "Running {{ seen: {seen} }}"),
+            Self::_Phantom(_) => f.write_str("_Phantom"),
+        }
+    }
+}
+
+impl<H: Send + Sync> PartialEq for Stage<H> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Created, Self::Created) => true,
+            (Self::Running { seen: a }, Self::Running { seen: b }) => a == b,
+            _ => false,
+        }
+    }
+}
+
+#[derive(EventVariant)]
+enum StageEvent<H> {
+    Start,
+    _Phantom(PhantomData<H>),
+}
+
+impl<H> Clone for StageEvent<H> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Start => Self::Start,
+            Self::_Phantom(_) => Self::_Phantom(PhantomData),
+        }
+    }
+}
+
+impl<H> Debug for StageEvent<H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Start => f.write_str("Start"),
+            Self::_Phantom(_) => f.write_str("_Phantom"),
+        }
+    }
+}
+
+fn stage_machine<H: Send + Sync + 'static>(
+) -> StateMachine<Stage<H>, StageEvent<H>, DslContext, DslAction> {
+    fsm! {
+        state:   Stage<H>;
+        event:   StageEvent<H>;
+        context: DslContext;
+        action:  DslAction;
+        initial: Stage::Created;
+
+        state Stage::Created {
+            on StageEvent::Start => |_: &Stage<H>, _: &StageEvent<H>, _: &mut DslContext| {
+                Box::pin(async { Ok(transitions::goto(Stage::Running { seen: 1 })) })
+            };
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_dsl_table_generic_over_an_opaque_handler() {
+    let mut machine = stage_machine::<OpaqueHandler>();
+    let mut ctx = DslContext {
+        log: Arc::new(RwLock::new(vec![])),
+    };
+
+    machine
+        .handle(StageEvent::Start, &mut ctx)
+        .await
+        .expect("start");
+    assert_eq!(machine.state(), &Stage::Running { seen: 1 });
+    assert_eq!(machine.state().variant_name(), "Running");
 }

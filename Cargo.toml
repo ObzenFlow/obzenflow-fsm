@@ -22,11 +22,22 @@ include = [
     "/LICENSE-APACHE",
 ]
 
+[lints]
+workspace = true
+
 [workspace]
 members = ["obzenflow-fsm-macros", "."]
 
 [workspace.package]
 version = "0.4.0"
+
+[workspace.lints.clippy]
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+let_underscore_untyped = "deny"
+let_underscore_must_use = "deny"
+no_effect_underscore_binding = "deny"
+used_underscore_binding = "deny"
 
 [dependencies]
 # Core dependencies only - no dependencies on other ObzenFlow crates

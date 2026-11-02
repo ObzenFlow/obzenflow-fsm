@@ -28,8 +28,6 @@
 //! - Some operations can't be made idempotent
 //! - Tests if our FSM design exposes or hides these issues
 
-#![allow(dead_code)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -46,7 +44,6 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
             operations: Vec<String>,
             operation_ids: std::collections::HashSet<String>,
         },
-        Overflowed,
         Corrupted(String),
     }
 
@@ -54,7 +51,6 @@ async fn circle_4_mark_of_the_beast_mathematical_properties() {
         fn variant_name(&self) -> &str {
             match self {
                 BeastState::Counting { .. } => "Counting",
-                BeastState::Overflowed => "Overflowed",
                 BeastState::Corrupted(_) => "Corrupted",
             }
         }

@@ -6,8 +6,6 @@
 //!
 //! These tests push edge cases and verify compile-time safety
 
-#![allow(dead_code)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -57,7 +55,6 @@ enum ConnectionEvent {
     ConnectionEstablished { session_id: String },
     ConnectionLost { reason: String },
     Heartbeat,
-    Retry,
     GiveUp,
 }
 
@@ -68,7 +65,6 @@ impl EventVariant for ConnectionEvent {
             ConnectionEvent::ConnectionEstablished { .. } => "ConnectionEstablished",
             ConnectionEvent::ConnectionLost { .. } => "ConnectionLost",
             ConnectionEvent::Heartbeat => "Heartbeat",
-            ConnectionEvent::Retry => "Retry",
             ConnectionEvent::GiveUp => "GiveUp",
         }
     }
@@ -145,7 +141,6 @@ impl FsmContext for ConnectionContext {
 
 struct MockSocketManager {
     is_open: bool,
-    fail_next: bool,
 }
 
 struct ConnectionMetrics {
@@ -376,10 +371,7 @@ async fn test_complex_state_transitions() {
 
     let mut connection = fsm;
     let mut ctx = ConnectionContext {
-        socket_manager: Arc::new(Mutex::new(MockSocketManager {
-            is_open: false,
-            fail_next: false,
-        })),
+        socket_manager: Arc::new(Mutex::new(MockSocketManager { is_open: false })),
         metrics: Arc::new(Mutex::new(ConnectionMetrics {
             total_connections: 0,
             total_heartbeats: 0,
@@ -453,10 +445,20 @@ async fn test_complex_state_transitions() {
         ConnectionState::Reconnecting { old_session, attempt: 1 } if old_session == "sess-123"
     ));
 
+    connection
+        .handle(ConnectionEvent::GiveUp, &mut ctx)
+        .await
+        .unwrap();
+    assert!(matches!(
+        connection.state(),
+        ConnectionState::Failed { reason, .. } if reason == "Failed to reconnect session sess-123"
+    ));
+
     // Verify metrics
     let metrics = ctx.metrics.lock().await;
     assert_eq!(metrics.total_connections, 1);
     assert_eq!(metrics.total_heartbeats, 3);
+    assert_eq!(metrics.total_failures, 1);
 
     // Check event log
     let mut events = vec![];
@@ -511,10 +513,7 @@ async fn test_timeout_handling() {
     let mut connection = fsm;
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut ctx = ConnectionContext {
-        socket_manager: Arc::new(Mutex::new(MockSocketManager {
-            is_open: false,
-            fail_next: false,
-        })),
+        socket_manager: Arc::new(Mutex::new(MockSocketManager { is_open: false })),
         metrics: Arc::new(Mutex::new(ConnectionMetrics {
             total_connections: 0,
             total_heartbeats: 0,
@@ -597,10 +596,7 @@ async fn test_invalid_transitions_handled_gracefully() {
 
     let mut connection = fsm;
     let mut ctx = ConnectionContext {
-        socket_manager: Arc::new(Mutex::new(MockSocketManager {
-            is_open: false,
-            fail_next: false,
-        })),
+        socket_manager: Arc::new(Mutex::new(MockSocketManager { is_open: false })),
         metrics: Arc::new(Mutex::new(ConnectionMetrics {
             total_connections: 0,
             total_heartbeats: 0,
@@ -1062,7 +1058,6 @@ async fn test_error_handling() {
     enum FallibleState {
         Ready,
         Processing,
-        Error { message: String },
     }
 
     impl StateVariant for FallibleState {
@@ -1070,7 +1065,6 @@ async fn test_error_handling() {
             match self {
                 FallibleState::Ready => "Ready",
                 FallibleState::Processing => "Processing",
-                FallibleState::Error { .. } => "Error",
             }
         }
     }
@@ -1078,14 +1072,12 @@ async fn test_error_handling() {
     #[derive(Clone, Debug)]
     enum FallibleEvent {
         Process { should_fail: bool },
-        Reset,
     }
 
     impl EventVariant for FallibleEvent {
         fn variant_name(&self) -> &str {
             match self {
                 FallibleEvent::Process { .. } => "Process",
-                FallibleEvent::Reset => "Reset",
             }
         }
     }
@@ -1093,8 +1085,6 @@ async fn test_error_handling() {
     #[derive(Clone, Debug, PartialEq)]
     enum FallibleAction {
         StartProcessing,
-        HandleError(String),
-        Cleanup,
     }
 
     #[derive(Clone)]
@@ -1120,10 +1110,7 @@ async fn test_error_handling() {
         .on(
             "Process",
             |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
-                let should_fail = match event {
-                    FallibleEvent::Process { should_fail } => *should_fail,
-                    _ => unreachable!(),
-                };
+                let FallibleEvent::Process { should_fail } = *event;
 
                 Box::pin(async move {
                     if should_fail {
@@ -1136,19 +1123,6 @@ async fn test_error_handling() {
                             actions: vec![FallibleAction::StartProcessing],
                         })
                     }
-                })
-            },
-        )
-        .done()
-        .when("Error")
-        .on(
-            "Reset",
-            |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
-                Box::pin(async {
-                    Ok(Transition {
-                        next_state: FallibleState::Ready,
-                        actions: vec![FallibleAction::Cleanup],
-                    })
                 })
             },
         )
@@ -1172,10 +1146,7 @@ async fn test_error_handling() {
         .on(
             "Process",
             |_state: &FallibleState, event: &FallibleEvent, _ctx: &mut FallibleContext| {
-                let should_fail = match event {
-                    FallibleEvent::Process { should_fail } => *should_fail,
-                    _ => unreachable!(),
-                };
+                let FallibleEvent::Process { should_fail } = *event;
 
                 Box::pin(async move {
                     if should_fail {
@@ -1188,19 +1159,6 @@ async fn test_error_handling() {
                             actions: vec![FallibleAction::StartProcessing],
                         })
                     }
-                })
-            },
-        )
-        .done()
-        .when("Error")
-        .on(
-            "Reset",
-            |_state: &FallibleState, _event: &FallibleEvent, _ctx: &mut FallibleContext| {
-                Box::pin(async {
-                    Ok(Transition {
-                        next_state: FallibleState::Ready,
-                        actions: vec![FallibleAction::Cleanup],
-                    })
                 })
             },
         )
@@ -1259,10 +1217,7 @@ async fn test_state_persistence() {
     let mut restored_fsm = fsm;
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut ctx = ConnectionContext {
-        socket_manager: Arc::new(Mutex::new(MockSocketManager {
-            is_open: true,
-            fail_next: false,
-        })),
+        socket_manager: Arc::new(Mutex::new(MockSocketManager { is_open: true })),
         metrics: Arc::new(Mutex::new(ConnectionMetrics {
             total_connections: 1,
             total_heartbeats: 42,
