@@ -14,7 +14,10 @@ categories = ["asynchronous", "data-structures", "algorithms"]
 publish = true
 include = [
     "/src/**/*.rs",
-    "/tests/**",
+    "/examples/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/compile_fail/*.stderr",
+    "/tests/README.md",
     "/Cargo.toml",
     "/README.md",
     "/CHANGELOG.md",
