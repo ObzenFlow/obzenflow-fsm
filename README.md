@@ -12,7 +12,7 @@ This crate is inspired by Akka / Apache Pekko (Classic) FSM patterns and the [`e
 
 ## Why this exists
 
-ObzenFlow’s architecture leans heavily on event-sourced finite state machines that keeps state evolution deterministic, make effects explicit, and make “what happened” auditable.
+ObzenFlow’s architecture leans heavily on event-sourced finite state machines that keep state evolution deterministic, make effects explicit, and make “what happened” auditable.
 
 This crate was extracted as a standalone library so the FSM engine can be reused independently (it has no dependencies on other ObzenFlow crates).
 
@@ -144,7 +144,7 @@ For more examples (timeouts, entry/exit hooks, unhandled handlers, host-loop pat
 
 ## Testing
 
-The test suite is organised around the “circles of distributed systems hell”, six numbered integration tests that target real failure modes in async, event-sourced state machines. Each circle maps to a dimension in ObzenFlow’s [CHAIN maturity model](https://obzenflow.dev/philosophy/chain/).
+The test suite is organized around the “circles of distributed systems hell”, six numbered integration tests that target real failure modes in async, event-sourced state machines.
 
 See [`tests/README.md`](tests/README.md) for the full breakdown.
 
@@ -158,18 +158,10 @@ Run one circle with output:
 cargo test circle_4 -- --nocapture
 ```
 
-## Project links
+## Documentation
 
-* Docs: https://docs.rs/obzenflow-fsm
-* Changelog: `CHANGELOG.md`
-* Contributing: `CONTRIBUTING.md`
-
-## Project policies
-
-* Security: `SECURITY.md`
-* Code of Conduct: `CODE_OF_CONDUCT.md`
-* Trademarks: `TRADEMARKS.md`
+Visit the [ObzenFlow website](https://obzenflow.dev/) for an introduction to the framework.
 
 ## License
 
-Dual-licensed under MIT OR Apache-2.0.
+Dual-licensed under [MIT](https://github.com/obzenflow/obzenflow-fsm/blob/main/LICENSE-MIT) OR [Apache-2.0](https://github.com/obzenflow/obzenflow-fsm/blob/main/LICENSE-APACHE).

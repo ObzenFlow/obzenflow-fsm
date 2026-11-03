@@ -9,138 +9,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-11-02
 
+`fsm!` now catches a misspelled state or event name when you compile, where before the event went unhandled at runtime. This release also removes the old builder API, so `fsm!` is the only way to build a state machine.
+
+### Breaking changes
+- Enums used as the state or event type in `fsm!` must derive `StateVariant` or `EventVariant`. A hand-written impl no longer compiles.
+- The `builder` module is no longer public. Use `fsm!` instead.
+- The `goto` and `stay` helpers, and their `_with_actions` forms, moved to `obzenflow_fsm::transitions`.
+
 ### Added
-- `#[derive(StateVariant)]` and `#[derive(EventVariant)]` now accept generic enums.
-- A Publish workflow releases each crate from CI, behind a pre-flight report and the `release` environment's approval, with a crates.io token minted for the run.
-- An `advisories` check runs `cargo deny check advisories` on every CI run and daily.
+- The derives now work on generic enums.
+
+### Fixed
+- A misspelled state or event name in an `fsm!` table is now a compile error on that line.
+- Circle 4's tests now check the properties they describe, and `cargo test circle_4` runs them.
 
 ### Changed
-- Both crates now share one version, starting at 0.4.0 (`obzenflow-fsm-macros` moves from 0.1.2), and `obzenflow-fsm` requires `obzenflow-fsm-macros` at exactly that version.
-- `fsm!` requires its state and event types to derive `StateVariant` and `EventVariant`. A hand-written impl fails to compile at the table's `state:` or `event:` line.
-- `obzenflow_fsm::builder` is no longer public. The builder is reachable only through the hidden `obzenflow_fsm::internal` path, with no stability promise, and its transition helpers moved to `obzenflow_fsm::transitions`.
-- CI uses Rust 1.99.0. Both manifests deny the Clippy lints that catch `#[allow]` and `let _` discards, and CI refuses `#[expect]`.
+- `obzenflow-fsm-macros` now shares this crate's version, so it jumps from 0.1.2 to 0.4.0. You don't need to add it to your dependencies.
 
-### Removed
-- The builder's deprecation, and the `#[allow(deprecated)]` that every `fsm!` expansion carried.
+### Upgrading from 0.3
 
-### Fixed
-- `fsm!` no longer compiles a `state` block or `on` row that names a variant its enum does not have. It fails with `E0599` at that line, where before the event went unhandled at runtime.
-- Corrected Circle 4's mathematical-property harness: idempotence now depends on in-state operation IDs, duplicate credits suppress downstream actions, append ordering is compared from equivalent initial states, debit batching uses additive deltas, and the non-associative regrouping example now uses naive partial averages.
+Replace hand-written impls with the derive:
 
-### Security
-- The lockfile moves tokio to 1.54.1, past RUSTSEC-2026-0386. The published requirement is unchanged.
+```diff
+-#[derive(Clone, Debug, PartialEq)]
++#[derive(Clone, Debug, PartialEq, StateVariant)]
+ enum DoorState {
+     Closed,
+     Open,
+ }
+-
+-impl StateVariant for DoorState {
+-    fn variant_name(&self) -> &str {
+-        match self {
+-            DoorState::Closed => "Closed",
+-            DoorState::Open => "Open",
+-        }
+-    }
+-}
+```
 
-### Migration
-- Import `goto`, `goto_with_actions`, `stay` and `stay_with_actions` from `obzenflow_fsm::transitions`.
-- Replace a hand-written `StateVariant` or `EventVariant` impl on an `fsm!` type with the derive.
-- Move code that used `obzenflow_fsm::builder` to `fsm!`.
+Do the same for your event enum with `EventVariant`. Then update the helper imports:
 
-## [0.3.3] - 2026-05-02
+```diff
+-use obzenflow_fsm::builder::transitions::{goto, stay};
++use obzenflow_fsm::transitions::{goto, stay};
+```
 
-### Fixed
-- Added the missing Circle 4 associativity/regrouping test coverage.
-- Renamed the Circle 4 test so `cargo test circle_4 -- --nocapture` runs the documented target.
-- Updated the Circle 4 test README description to match the implemented mathematical-property coverage.
+If you used the builder directly, move to `fsm!`. The README's quick start shows a full example.
 
 ## [0.3.2] - 2026-03-01
 
-### Added
-- Added DCO governance docs.
-- Added a PR-only DCO check in CI.
-
-### Changed
-- Tightened README (removed redundancy, clarified design goals).
-- Updated `CONTRIBUTING.md` and trademark policy docs.
-- Updated MIT license year ranges.
+This release changes no code. It updates the README, the contributing guide and the copyright years, and contributors now sign off each commit under the Developer Certificate of Origin.
 
 ## [0.3.1] - 2026-02-25
 
 ### Fixed
-- `#[derive(StateVariant)]` and `#[derive(EventVariant)]` now correctly match unit and tuple enum variants.
+- The derives now handle unit and tuple variants correctly.
 
 ### Changed
-- Prepared `obzenflow-fsm-macros` for publishing (crate metadata + policy files) and fixed `cargo publish --dry-run`.
-- Added SPDX headers across Rust sources and aligned CI with ObzenFlow (pinned toolchain, `--locked`, SPDX checks).
-- Added `Cargo.lock`, renamed “circle” tests to `circle_N_*`, and added `tests/README.md`.
-- Documentation and README improvements.
+- The circle tests are renamed `circle_1_*` to `circle_6_*`, and `tests/README.md` describes each one.
 
-## [0.3.0] - 2025-11-27
+## [0.3.0] - 2026-01-21
 
-### Changed
-- Promoted the `fsm!` macro and derives (`StateVariant`, `EventVariant`) to the primary public front-end for building state machines.
-- Removed `pub use builder::FsmBuilder` from the crate root; the builder now lives under `obzenflow_fsm::internal::FsmBuilder` and is intended only for macro expansion and focused tests.
-- Tightened builder-time validation so strict mode is always enabled (duplicate `(state, event)` handlers are rejected and the initial state must have at least one transition or timeout).
-- Aligned `StateMachine` error behaviour with the design docs by returning structured `FsmError` for unhandled events and builder failures instead of stringly errors or silent success.
+The first release on crates.io. It adds `fsm!`, which writes a state machine as a table of states and the events each one handles, and makes it the main way to build one.
 
-### Migration
-- Updated crate examples and internal tests to prefer the `fsm!` DSL where it improves clarity, retaining legacy builder coverage only in dedicated tests that exercise `internal::FsmBuilder`.
-- Coordinated with ObzenFlow so runtime supervisors now construct FSMs exclusively via `fsm!` and a `StateMachine`-returning API, with no public dependency on `FsmBuilder`.
-
-## [0.2.1] - 2025-11-26
+### Breaking changes
+- `FsmBuilder` is no longer exported from the crate root. Use `fsm!` instead.
+- Building a machine now fails if two handlers cover the same state and event, or if the initial state has no transition or timeout.
 
 ### Added
-- `fsm!` macro front-end with support for:
-  - Top-level `state` / `event` / `context` / `action` / `initial` declarations.
-  - Per-state `on` clauses, `timeout` clauses, and `on_entry` / `on_exit` hooks.
-  - Optional top-level `unhandled => handler;` mapping to `FsmBuilder::when_unhandled`.
-- New DSL-focused tests exercising the macro (`test_dsl_basic`, `test_dsl_features`).
+- `fsm!`, with `on` rows, timeouts, and entry and exit hooks for each state, plus an optional handler for unhandled events.
+- The `StateVariant` and `EventVariant` derives, so you don't write those impls by hand.
+
+### Deprecated
+- The builder's string-keyed methods (`when`, `from_any`, `on_entry`, `on_exit` and `on`). Use `fsm!` instead.
+
+### Upgrading from 0.2
+
+Rewrite builder code with `fsm!`. The README's quick start shows a full example.
+
+## 0.2.0 - 2025-11-25
+
+Handlers and actions now get the context as `&mut Context` instead of a shared `Arc<Context>`, and errors are `FsmError` values instead of strings.
+
+### Breaking changes
+- Handlers, `StateMachine::handle` and `check_timeout` take `&mut Context` in place of `Arc<Context>`, and `FsmAction::execute` takes `&mut Self::Context`.
+- Errors are `FsmError` values instead of strings.
+- An event with no handler and no `when_unhandled` hook now returns an error, where before it was logged and ignored.
 
 ### Changed
-- Marked the string-based builder API as deprecated in preparation for `0.3.0`:
-  - `FsmBuilder::when(&str)`, `from_any()`, `on_entry(&str, …)`, `on_exit(&str, …)`.
-  - `WhenBuilder::on(&str, …)` and `TimeoutBuilder::on(&str, …)`.
-- Documented that these methods will become crate-private or be removed in `0.3.0`, leaving the typed DSL as the primary public entry point.
+- If the initial state has a timeout, it now starts when the machine is built.
+- A transition back to the same state now runs its exit and entry hooks and restarts its timeout.
 
-## [0.2.0] - 2025-11-25
+### Upgrading from 0.1
 
-### Changed
-- Switched from `Arc<Context>` to a single mutable-context FSM API:
-  - `StateMachine::handle(&mut self, event, &mut Context)`
-  - `FsmAction::execute(&self, &mut Context)`
-- Updated `FsmBuilder` handler signatures to receive `&mut Context` instead of `Arc<Context>`.
-- Clarified Mealy-machine / event-sourcing semantics and added guardrails for keeping FSM usage deterministic and “functional in spirit”.
+```diff
+-async fn execute(&self, ctx: &Self::Context) -> Result<(), String> {
++async fn execute(&self, ctx: &mut Self::Context) -> FsmResult<()> {
+```
 
-### Improved
-- Timeout semantics:
-  - Initial-state timeouts are now scheduled when the machine is constructed if configured.
-  - Self-transitions run exit/entry hooks and refresh timeouts.
-- Error handling:
-  - Introduced structured `FsmError` across public APIs (timeouts, unhandled events, duplicate handlers, handler failures).
-  - Builder-time validation rejects duplicate `(state, event)` handlers.
-- Unhandled event behavior:
-  - Unhandled events without a `when_unhandled` hook now produce a structured error instead of silently succeeding.
+```diff
+-let actions = machine.handle(event, ctx.clone()).await?;
++let actions = machine.handle(event, &mut ctx).await?;
+```
 
-## [0.1.0] - 2025-08-15
+## 0.1.0 - 2025-08-15
+
+The first version, extracted from ObzenFlow.
 
 ### Added
-- Initial release of obzenflow-fsm
-- Async-first Finite State Machine implementation
-- Builder pattern for compile-time safety
-- Support for async closures via `Arc<Context>`
-- Mealy machine implementation
-- Comprehensive test suite including stress tests
-- Examples demonstrating common usage patterns
-
-### Core Features
-- **State Management**: Type-safe state transitions with compile-time guarantees
-- **Event Handling**: Flexible event routing with pattern matching
-- **Async Support**: Full async/await support with proper lifetime management
-- **Context Sharing**: Thread-safe context sharing via `Arc`
-- **Action System**: Deferred action execution after state transitions
-- **Error Handling**: Comprehensive error types and recovery patterns
-
-### Documentation
-- Detailed README with design rationale
-- API documentation for all public types
-- Example FSM implementations
-- Test suite demonstrating advanced patterns
+- An async state machine. Each event runs a handler that returns the next state and a list of actions, and the caller runs the actions after the transition.
+- `FsmBuilder`, for declaring each state's handlers, timeouts, and entry and exit hooks.
+- A context shared with every handler through `Arc<Context>`.
+- An example and a test suite, including stress tests.
 
 [Unreleased]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.3...v0.4.0
-[0.3.3]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.2...v0.3.3
+[0.4.0]: https://github.com/obzenflow/obzenflow-fsm/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.2
 [0.3.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.1
 [0.3.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.3.0
-[0.2.1]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.1
-[0.2.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.2.0
-[0.1.0]: https://github.com/obzenflow/obzenflow-fsm/releases/tag/v0.1.0
