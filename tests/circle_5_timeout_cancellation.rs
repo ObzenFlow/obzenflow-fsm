@@ -7,7 +7,7 @@
 //! The Jonestown Protocol Under Fire:
 //! - FSMs trapped in purgatory (long async operations with data)
 //! - AT LEAST ONCE demands: timeout CANNOT drop data
-//! - If timeout threatens data loss → EmitKoolAid → DrinkKoolAid
+//! - If timeout threatens data loss → PoisonDownstream → DrinkKoolAid
 //! - Better to die than to lose a single message
 //!
 //! What it tests:
@@ -21,9 +21,6 @@
 //! - Every timeout must decide: complete or die
 //! - Tests if our FSM honors the sacred AT LEAST ONCE covenant
 //! - "Beg for meat, get meat, no more hungry" - but NEVER drop the meat
-
-#![allow(dead_code)]
-#![allow(deprecated)]
 
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
@@ -64,10 +61,7 @@ async fn test_5_timeout_cancellation_inferno() {
     #[derive(Clone, Debug)]
     enum PurgatoryEvent {
         StartMaterialization(Vec<String>), // Data that MUST NOT be lost
-        MaterializationProgress(String),   // More data arriving
         ProcessBatch,
-        TimeoutDetected,
-        EmitKoolAid,  // Signal downstream: we're dying
         DrinkKoolAid, // Actually die
     }
 
@@ -75,10 +69,7 @@ async fn test_5_timeout_cancellation_inferno() {
         fn variant_name(&self) -> &str {
             match self {
                 PurgatoryEvent::StartMaterialization(_) => "StartMaterialization",
-                PurgatoryEvent::MaterializationProgress(_) => "MaterializationProgress",
                 PurgatoryEvent::ProcessBatch => "ProcessBatch",
-                PurgatoryEvent::TimeoutDetected => "TimeoutDetected",
-                PurgatoryEvent::EmitKoolAid => "EmitKoolAid",
                 PurgatoryEvent::DrinkKoolAid => "DrinkKoolAid",
             }
         }
@@ -88,9 +79,8 @@ async fn test_5_timeout_cancellation_inferno() {
     enum PurgatoryAction {
         BufferData(String),
         ProcessData(String),
-        PoisonDownstream,           // Send kool-aid to all subscribers
-        CommitSuicide,              // FSM terminates itself
-        PanicWithData(Vec<String>), // Last resort: panic with uncommitted data
+        PoisonDownstream, // Send kool-aid to all subscribers
+        Terminate,
     }
 
     #[derive(Clone)]
@@ -134,14 +124,7 @@ async fn test_5_timeout_cancellation_inferno() {
                     ctx.kool_aid_emitted.store(true, Ordering::Release);
                     Ok(())
                 }
-                PurgatoryAction::CommitSuicide => {
-                    // FSM terminates itself
-                    Ok(())
-                }
-                PurgatoryAction::PanicWithData(_data) => {
-                    // Last resort
-                    Ok(())
-                }
+                PurgatoryAction::Terminate => Ok(()),
             }
         }
     }
@@ -393,7 +376,7 @@ async fn test_5_timeout_cancellation_inferno() {
                 ctx.kool_aid_emitted.store(true, Ordering::SeqCst);
                 Ok(Transition {
                     next_state: PurgatoryState::Dead,
-                    actions: vec![PurgatoryAction::CommitSuicide],
+                    actions: vec![PurgatoryAction::Terminate],
                 })
             })
         },

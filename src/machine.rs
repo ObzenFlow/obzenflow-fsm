@@ -32,7 +32,7 @@ type UnhandledHandler<S, E, C> = Arc<
 
 /// The concrete finite state machine runtime.
 ///
-/// Constructed via the `fsm!` DSL (recommended) or the legacy builder API.
+/// Constructed via the `fsm!` DSL.
 ///
 /// # Action ordering
 ///
@@ -64,7 +64,7 @@ where
     /// Create a new state machine.
     ///
     /// This method is intentionally `pub(crate)` to enforce construction via `fsm!` (or the
-    /// deprecated builder API).
+    /// builder it expands to).
     pub(crate) fn new(
         initial_state: S,
         transitions: TransitionMap<S, E, C, A>,
@@ -121,8 +121,8 @@ where
     /// Handles an event and (optionally) transitions to a new state.
     ///
     /// Dispatch is performed by `(state.variant_name(), event.variant_name())`.
-    /// If there is no exact match, the engine will also check for a wildcard state (`"_"`) handler
-    /// (used by the legacy builder API). If the event is still unhandled:
+    /// If there is no exact match, the engine will also check for a wildcard state (`"_"`) handler,
+    /// which only the hidden builder's `from_any` registers. If the event is still unhandled:
     /// - If a `when_unhandled` hook was configured, it is executed immediately and an empty action
     ///   list is returned.
     /// - Otherwise [`FsmError::UnhandledEvent`] is returned.

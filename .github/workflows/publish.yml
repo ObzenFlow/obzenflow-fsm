@@ -1,0 +1,249 @@
+name: Publish to crates.io
+run-name: Publish ${{ inputs.package }} ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Workspace version to publish; must match an existing tag vX.Y.Z"
+        required: true
+        type: string
+      package:
+        description: "One crate to publish in maintainer-controlled dependency order"
+        required: true
+        type: choice
+        options:
+          - obzenflow-fsm-macros
+          - obzenflow-fsm
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      REQUESTED_VERSION: ${{ inputs.version }}
+      REQUESTED_PACKAGE: ${{ inputs.package }}
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Validate release inputs
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version must be X.Y.Z or X.Y.Z-prerelease, got '$REQUESTED_VERSION'"
+            exit 1
+          fi
+
+          case "$REQUESTED_PACKAGE" in
+            obzenflow-fsm-macros|obzenflow-fsm)
+              ;;
+            *)
+              echo "::error::package is not in the publishable crate set: '$REQUESTED_PACKAGE'"
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+
+      - name: Pin the checked-out commit
+        id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the release SHA passed full CI on main
+        id: ci
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ steps.resolve.outputs.sha }}
+        with:
+          script: |
+            const releaseSha = process.env.RELEASE_SHA;
+            const { data } = await github.request(
+              "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                branch: "main",
+                event: "push",
+                status: "success",
+                head_sha: releaseSha,
+                per_page: 100,
+              },
+            );
+
+            const run = data.workflow_runs.find((candidate) =>
+              candidate.head_sha === releaseSha &&
+              candidate.head_branch === "main" &&
+              candidate.event === "push" &&
+              candidate.status === "completed" &&
+              candidate.conclusion === "success"
+            );
+
+            if (!run) {
+              throw new Error(
+                `No successful full main CI run exists for release SHA ${releaseSha}. ` +
+                "Wait for the push-to-main CI run to pass, then dispatch again."
+              );
+            }
+
+            core.info(`Release SHA ${releaseSha} is sealed by ${run.html_url}`);
+            core.setOutput("run_url", run.html_url);
+            core.setOutput("run_number", run.run_number);
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+
+      - name: Verify the selected package
+        env:
+          RELEASE_SHA: ${{ steps.resolve.outputs.sha }}
+          MAIN_CI_URL: ${{ steps.ci.outputs.run_url }}
+          MAIN_CI_NUMBER: ${{ steps.ci.outputs.run_number }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+          if ! package="$(
+            jq -ce --arg name "$REQUESTED_PACKAGE" \
+              '.packages[] | select(.name == $name)' <<< "$metadata"
+          )"; then
+            fail "package '$REQUESTED_PACKAGE' is absent from the tagged workspace"
+          fi
+
+          package_version="$(jq -r '.version' <<< "$package")"
+          workspace_version="$(
+            jq -r '.packages[] | select(.name == "obzenflow-fsm") | .version' <<< "$metadata"
+          )"
+          package_license="$(jq -r '.license // ""' <<< "$package")"
+          package_root="$(dirname "$(jq -r '.manifest_path' <<< "$package")")"
+
+          [[ "$workspace_version" == "$REQUESTED_VERSION" ]] || \
+            fail "tag v$REQUESTED_VERSION has workspace version $workspace_version"
+          [[ "$package_version" == "$REQUESTED_VERSION" ]] || \
+            fail "$REQUESTED_PACKAGE has version $package_version, expected $REQUESTED_VERSION"
+          [[ "$package_license" == "MIT OR Apache-2.0" ]] || \
+            fail "$REQUESTED_PACKAGE has unexpected licence metadata: '$package_license'"
+
+          package_files="$(
+            cargo package --package "$REQUESTED_PACKAGE" --locked --list
+          )"
+
+          required_files=(
+            Cargo.toml
+            README.md
+            TRADEMARKS.md
+            LICENSE-MIT
+            LICENSE-APACHE
+          )
+          for file in "${required_files[@]}"; do
+            grep -Fqx -- "$file" <<< "$package_files" || \
+              fail "$REQUESTED_PACKAGE archive is missing $file"
+          done
+
+          while IFS= read -r file; do
+            case "$file" in
+              .cargo_vcs_info.json|Cargo.lock|Cargo.toml|Cargo.toml.orig|README.md|TRADEMARKS.md|LICENSE-MIT|LICENSE-APACHE|src/*.rs)
+                ;;
+              tests/*.rs|tests/*.stderr|tests/README.md|CHANGELOG.md)
+                [[ "$REQUESTED_PACKAGE" == "obzenflow-fsm" ]] || \
+                  fail "$REQUESTED_PACKAGE archive contains unexpected file: $file"
+                ;;
+              *)
+                fail "$REQUESTED_PACKAGE archive contains unexpected file: $file"
+                ;;
+            esac
+          done <<< "$package_files"
+
+          for file in TRADEMARKS.md LICENSE-MIT LICENSE-APACHE; do
+            cmp -s "$GITHUB_WORKSPACE/$file" "$package_root/$file" || \
+              fail "$REQUESTED_PACKAGE/$file differs from the canonical root copy"
+          done
+
+          registry_row=""
+          if [[ "$REQUESTED_PACKAGE" == "obzenflow-fsm" ]]; then
+            macros_req="$(
+              jq -r '.dependencies[] | select(.name == "obzenflow-fsm-macros") | .req' <<< "$package"
+            )"
+            [[ "$macros_req" == "=$REQUESTED_VERSION" ]] || \
+              fail "obzenflow-fsm requires obzenflow-fsm-macros $macros_req, expected =$REQUESTED_VERSION"
+            curl -fsS -A "$GITHUB_REPOSITORY publish preflight" \
+              "https://crates.io/api/v1/crates/obzenflow-fsm-macros/$REQUESTED_VERSION" \
+              | jq -e --arg version "$REQUESTED_VERSION" \
+                '.version.num == $version and (.version.yanked | not)' > /dev/null || \
+              fail "obzenflow-fsm-macros $REQUESTED_VERSION is not on crates.io; publish it first"
+            registry_row="| obzenflow-fsm-macros $REQUESTED_VERSION is on crates.io | Passed |"
+          fi
+
+          printf 'package=%s requested=%s workspace=%s\n' \
+            "$REQUESTED_PACKAGE" "$REQUESTED_VERSION" "$workspace_version"
+          printf '%s\n' "$package_files"
+
+          file_count="$(wc -l <<< "$package_files" | tr -d '[:space:]')"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          # Match the dry-run report: one outer code block makes the whole
+          # Markdown report copyable, including its nested file-list block.
+          {
+            printf '## Publish preflight: PASSED\n\n'
+            printf 'Copy the report below for review before approving publication.\n\n'
+            printf '````markdown\n'
+            printf '# Publish preflight report: %s %s\n\n' "$REQUESTED_PACKAGE" "$REQUESTED_VERSION"
+            printf '**Preflight checks: PASSED**\n\n'
+            printf 'Prepared before manual publish approval.\n\n'
+            printf 'Repository: %s\n\n' "$GITHUB_REPOSITORY"
+            printf 'Tag: `v%s`\n\n' "$REQUESTED_VERSION"
+            printf 'Release commit SHA: `%s`\n\n' "$RELEASE_SHA"
+            printf 'Publish workflow: %s\n\n' "$run_url"
+            printf 'Main CI seal: [#%s](%s)\n\n' "$MAIN_CI_NUMBER" "$MAIN_CI_URL"
+            printf 'Licence: `%s`\n\n' "$package_license"
+            printf '## Verification\n\n'
+            printf '| Check | Result |\n| --- | --- |\n'
+            printf '| Release inputs and package/workspace versions | Passed |\n'
+            printf '| Release tag checkout and commit SHA | Passed |\n'
+            printf '| Successful full main CI for the release SHA | Passed |\n'
+            printf '| Required archive files and allowed file types | Passed |\n'
+            printf '| Licence metadata and canonical licence copies | Passed |\n'
+            if [[ -n "$registry_row" ]]; then
+              printf '%s\n' "$registry_row"
+            fi
+            printf '\n## Files (%s)\n\n' "$file_count"
+            printf 'Source: `cargo package --package %s --locked --list`\n\n' "$REQUESTED_PACKAGE"
+            printf '```text\n%s\n```\n' "$package_files"
+            printf '````\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REQUESTED_PACKAGE: ${{ inputs.package }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish the selected crate
+        run: cargo publish --package "$REQUESTED_PACKAGE" --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

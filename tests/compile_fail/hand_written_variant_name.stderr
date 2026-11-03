@@ -1,0 +1,35 @@
+error[E0277]: `fsm!` needs `Door` to derive `StateVariant`
+  --> tests/compile_fail/hand_written_variant_name.rs:55:18
+   |
+55 |         state:   Door;
+   |                  ^^^^ `Door` implements `StateVariant` by hand
+   |
+help: the trait `obzenflow_fsm::internal::DerivedStateVariant` is not implemented for `Door`
+  --> tests/compile_fail/hand_written_variant_name.rs:10:1
+   |
+10 | enum Door {
+   | ^^^^^^^^^
+   = note: `fsm!` dispatches on variant identifiers; replace the hand-written impl with `#[derive(obzenflow_fsm::StateVariant)]`
+note: required by a bound in `obzenflow_fsm::internal::require_derived_state`
+  --> src/lib.rs
+   |
+   |     pub fn require_derived_state<S: DerivedStateVariant>() {}
+   |                                     ^^^^^^^^^^^^^^^^^^^ required by this bound in `require_derived_state`
+
+error[E0277]: `fsm!` needs `DoorEvent` to derive `EventVariant`
+  --> tests/compile_fail/hand_written_variant_name.rs:56:18
+   |
+56 |         event:   DoorEvent;
+   |                  ^^^^^^^^^ `DoorEvent` implements `EventVariant` by hand
+   |
+help: the trait `obzenflow_fsm::internal::DerivedEventVariant` is not implemented for `DoorEvent`
+  --> tests/compile_fail/hand_written_variant_name.rs:25:1
+   |
+25 | enum DoorEvent {
+   | ^^^^^^^^^^^^^^
+   = note: `fsm!` dispatches on variant identifiers; replace the hand-written impl with `#[derive(obzenflow_fsm::EventVariant)]`
+note: required by a bound in `obzenflow_fsm::internal::require_derived_event`
+  --> src/lib.rs
+   |
+   |     pub fn require_derived_event<E: DerivedEventVariant>() {}
+   |                                     ^^^^^^^^^^^^^^^^^^^ required by this bound in `require_derived_event`

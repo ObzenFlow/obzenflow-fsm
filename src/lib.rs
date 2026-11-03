@@ -194,6 +194,9 @@
 //! }
 //! ```
 //!
+//! Handlers can build the [`Transition`] they return with the helpers in [`transitions`]:
+//! `goto`, `goto_with_actions`, `stay` and `stay_with_actions`.
+//!
 //! The rest of this page focuses on the patterns used to run FSMs inside an async runtime.
 //!
 //! ## Supervisor / host loop pattern
@@ -363,9 +366,12 @@
 //!
 //! ## Variant names and dispatch
 //!
-//! Transitions are looked up by `(state.variant_name(), event.variant_name())`. For enums, the
-//! recommended approach is to derive these traits:
-//! `#[derive(obzenflow_fsm::StateVariant, obzenflow_fsm::EventVariant)]`.
+//! Transitions are looked up by `(state.variant_name(), event.variant_name())`. `fsm!` requires
+//! both traits to be derived, generic enums included, so every name it dispatches on is a variant
+//! identifier: `#[derive(obzenflow_fsm::StateVariant, obzenflow_fsm::EventVariant)]`.
+//!
+//! `fsm!` also names each `state` block's and `on` row's variant as a pattern, so a variant its
+//! enum does not have fails to compile at that block or row.
 
 // Allow this crate to refer to itself via `obzenflow_fsm` so that
 // proc-macro expansions using `::obzenflow_fsm::...` also work in
@@ -373,10 +379,11 @@
 extern crate self as obzenflow_fsm;
 
 // Module declarations
-pub mod builder;
+mod builder;
 pub mod error;
 pub mod handlers;
 pub mod machine;
+pub mod transitions;
 pub mod types;
 
 // Re-export main types for convenience
@@ -394,8 +401,29 @@ pub use handlers::{StateHandler, TimeoutHandler, TransitionHandler};
 /// signalling that the underlying types are implementation details.
 #[doc(hidden)]
 pub mod internal {
-    #[allow(deprecated)]
     pub use crate::builder::FsmBuilder;
+
+    /// Implemented only by `#[derive(StateVariant)]`; `fsm!` requires it of its state type.
+    #[diagnostic::on_unimplemented(
+        message = "`fsm!` needs `{Self}` to derive `StateVariant`",
+        label = "`{Self}` implements `StateVariant` by hand",
+        note = "`fsm!` dispatches on variant identifiers; replace the hand-written impl with `#[derive(obzenflow_fsm::StateVariant)]`"
+    )]
+    pub trait DerivedStateVariant: crate::StateVariant {}
+
+    /// Implemented only by `#[derive(EventVariant)]`; `fsm!` requires it of its event type.
+    #[diagnostic::on_unimplemented(
+        message = "`fsm!` needs `{Self}` to derive `EventVariant`",
+        label = "`{Self}` implements `EventVariant` by hand",
+        note = "`fsm!` dispatches on variant identifiers; replace the hand-written impl with `#[derive(obzenflow_fsm::EventVariant)]`"
+    )]
+    pub trait DerivedEventVariant: crate::EventVariant {}
+
+    /// Fails to compile unless `S` derives `StateVariant`.
+    pub fn require_derived_state<S: DerivedStateVariant>() {}
+
+    /// Fails to compile unless `E` derives `EventVariant`.
+    pub fn require_derived_event<E: DerivedEventVariant>() {}
 }
 
 // Re-export proc-macro helpers (derives + DSL).
@@ -412,47 +440,20 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
 
-    #[allow(dead_code)]
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, Debug, PartialEq, StateVariant)]
     enum TestState {
         Idle,
         Active { count: u32 },
-        Done,
     }
 
-    impl StateVariant for TestState {
-        fn variant_name(&self) -> &str {
-            match self {
-                TestState::Idle => "Idle",
-                TestState::Active { .. } => "Active",
-                TestState::Done => "Done",
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, EventVariant)]
     enum TestEvent {
         Start,
-        Increment,
-        Finish,
     }
 
-    impl EventVariant for TestEvent {
-        fn variant_name(&self) -> &str {
-            match self {
-                TestEvent::Start => "Start",
-                TestEvent::Increment => "Increment",
-                TestEvent::Finish => "Finish",
-            }
-        }
-    }
-
-    #[allow(dead_code)]
     #[derive(Clone, Debug, PartialEq)]
     enum TestAction {
         Log(String),
-        Notify,
     }
 
     struct TestContext {
@@ -473,10 +474,6 @@ mod tests {
             match self {
                 TestAction::Log(msg) => {
                     println!("Log: {msg}");
-                    Ok(())
-                }
-                TestAction::Notify => {
-                    println!("Notify");
                     Ok(())
                 }
             }

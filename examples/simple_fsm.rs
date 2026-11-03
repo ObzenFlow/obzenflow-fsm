@@ -8,34 +8,16 @@ use obzenflow_fsm::{fsm, EventVariant, FsmAction, FsmContext, StateVariant, Tran
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, StateVariant)]
 enum DoorState {
     Closed,
     Open,
 }
 
-impl StateVariant for DoorState {
-    fn variant_name(&self) -> &str {
-        match self {
-            DoorState::Closed => "Closed",
-            DoorState::Open => "Open",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, EventVariant)]
 enum DoorEvent {
     Open,
     Close,
-}
-
-impl EventVariant for DoorEvent {
-    fn variant_name(&self) -> &str {
-        match self {
-            DoorEvent::Open => "Open",
-            DoorEvent::Close => "Close",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

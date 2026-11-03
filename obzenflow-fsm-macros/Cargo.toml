@@ -1,6 +1,6 @@
 [package]
 name = "obzenflow-fsm-macros"
-version = "0.1.2"
+version.workspace = true
 edition = "2021"
 authors = ["ObzenFlow Contributors"]
 description = "Proc-macro helpers for the obzenflow-fsm crate (derives + DSL)"
@@ -12,9 +12,20 @@ readme = "README.md"
 keywords = ["fsm", "state-machine", "proc-macro", "async"]
 categories = ["asynchronous", "data-structures", "algorithms"]
 publish = true
+include = [
+    "/src/**/*.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/TRADEMARKS.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+]
 
 [lib]
 proc-macro = true
+
+[lints]
+workspace = true
 
 [dependencies]
 proc-macro2 = "1"

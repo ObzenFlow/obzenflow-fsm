@@ -43,7 +43,8 @@ These cover the API surface, builder validation, DSL mechanics, and compile-time
 |------|-------|
 | `test_simple.rs` | Baseline transitions, entry/exit hooks, timeouts, unhandled events |
 | `test_dsl_basic.rs` | `fsm!` macro smoke test |
-| `test_dsl_features.rs` | DSL entry/exit hooks, timeout clauses, unhandled handling |
+| `test_dsl_features.rs` | DSL entry/exit hooks, timeout clauses, unhandled handling, generic tables |
+| `test_dsl_compile_fail.rs` | Tables that name a missing variant or hand-write `variant_name()` fail to compile |
 | `test_builder_enforcement.rs` | Duplicate handler detection, strict mode validation |
 | `test_builder_only_construction.rs` | Proves `StateMachine` cannot be constructed outside the builder |
 | `test_compile_safety.rs` | Type-level safety: wrong state/event/context/action types must not compile |

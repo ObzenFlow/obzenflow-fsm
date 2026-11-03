@@ -1,0 +1,14 @@
+error[E0599]: no variant named `Clsoed` found for enum `Door`
+  --> tests/compile_fail/missing_state_variant.rs:42:21
+   |
+ 8 | enum Door {
+   | --------- variant `Clsoed` not found here
+...
+42 |         state Door::Clsoed {
+   |                     ^^^^^^
+   |
+help: there is a variant with a similar name
+   |
+42 -         state Door::Clsoed {
+42 +         state Door::Closed {
+   |

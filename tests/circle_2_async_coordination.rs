@@ -35,8 +35,6 @@
 //! - Tests our ability to handle complex inter-FSM communication
 //! - Proves the FSM can maintain order even when demons attack from multiple angles
 
-#![allow(deprecated)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -189,7 +187,6 @@ async fn test_2_async_coordination_nightmare() {
                     Ok(())
                 }
                 CoordAction::BroadcastShutdown => {
-                    let _ = ctx.shutdown_tx.send(());
                     ctx.event_log
                         .write()
                         .await
@@ -270,7 +267,10 @@ async fn test_2_async_coordination_nightmare() {
 
                             if ctx.ready_stages.read().await.len() == 5 {
                                 // All stages ready, notify via event
-                                let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesReady).await;
+                                ctx.pipeline_tx
+                                    .send(PipelineEvent::AllStagesReady)
+                                    .await
+                                    .expect("pipeline receiver alive");
                             }
                         }
                         Ok(Transition {
@@ -291,8 +291,10 @@ async fn test_2_async_coordination_nightmare() {
 
                         // Signal all stages to start
                         let stage_txs = ctx.stage_txs.read().await;
-                        for (_, tx) in stage_txs.iter() {
-                            let _ = tx.send(StageEvent::StartProcessing).await;
+                        for tx in stage_txs.values() {
+                            tx.send(StageEvent::StartProcessing)
+                                .await
+                                .expect("stage receiver alive");
                         }
 
                         Ok(Transition {
@@ -314,7 +316,11 @@ async fn test_2_async_coordination_nightmare() {
                             .push("Pipeline: Beginning shutdown".to_string());
 
                         // Broadcast shutdown to all stages
-                        let _ = ctx.shutdown_tx.send(());
+                        let receivers = ctx
+                            .shutdown_tx
+                            .send(())
+                            .expect("stages subscribed to shutdown");
+                        assert_eq!(receivers, 5);
 
                         Ok(Transition {
                             next_state: PipelineState::Draining,
@@ -338,7 +344,10 @@ async fn test_2_async_coordination_nightmare() {
                                 .push(format!("Pipeline: Stage {stage_id} drained"));
 
                             if ctx.drained_stages.read().await.len() == 5 {
-                                let _ = ctx.pipeline_tx.send(PipelineEvent::AllStagesDrained).await;
+                                ctx.pipeline_tx
+                                    .send(PipelineEvent::AllStagesDrained)
+                                    .await
+                                    .expect("pipeline receiver alive");
                             }
                         }
                         Ok(Transition {
@@ -437,7 +446,9 @@ async fn test_2_async_coordination_nightmare() {
                                 sleep(Duration::from_millis(20)).await;
                                 let stage_txs = ctx_clone.stage_txs.read().await;
                                 if let Some(tx) = stage_txs.get(&stage_id) {
-                                    let _ = tx.send(StageEvent::MaterializationComplete).await;
+                                    tx.send(StageEvent::MaterializationComplete)
+                                        .await
+                                        .expect("stage receiver alive");
                                 }
                             });
 
@@ -460,10 +471,10 @@ async fn test_2_async_coordination_nightmare() {
                                 .push(format!("Stage {stage_id}: Materialized"));
 
                             // Notify pipeline we're ready
-                            let _ = ctx
-                                .pipeline_tx
+                            ctx.pipeline_tx
                                 .send(PipelineEvent::StageReady { stage_id })
-                                .await;
+                                .await
+                                .expect("pipeline receiver alive");
 
                             Ok(Transition {
                                 next_state: StageState::Materialized,
@@ -538,7 +549,9 @@ async fn test_2_async_coordination_nightmare() {
                             tokio::spawn(async move {
                                 let stage_txs = ctx_clone.stage_txs.read().await;
                                 if let Some(tx) = stage_txs.get(&stage_id) {
-                                    let _ = tx.send(StageEvent::DrainComplete).await;
+                                    tx.send(StageEvent::DrainComplete)
+                                        .await
+                                        .expect("stage receiver alive");
                                 }
                             });
 
@@ -561,10 +574,10 @@ async fn test_2_async_coordination_nightmare() {
                                 .push(format!("Stage {stage_id}: Drained"));
 
                             // Notify pipeline we're drained
-                            let _ = ctx
-                                .pipeline_tx
+                            ctx.pipeline_tx
                                 .send(PipelineEvent::StageDrained { stage_id })
-                                .await;
+                                .await
+                                .expect("pipeline receiver alive");
 
                             Ok(Transition {
                                 next_state: StageState::Drained,

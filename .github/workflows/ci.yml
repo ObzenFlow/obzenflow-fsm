@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.1
           components: rustfmt
       - name: Verify lockfile
         run: cargo fetch --locked
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.1
           components: clippy
       - name: Verify lockfile
         run: cargo fetch --locked
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.1
       - name: Verify lockfile
         run: cargo fetch --locked
       - uses: Swatinem/rust-cache@v2
@@ -151,10 +151,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.99.1
       - name: Verify lockfile
         run: cargo fetch --locked
       - uses: Swatinem/rust-cache@v2
+
+      - name: Verify no lint expectations
+        run: "! git grep -nE '#!?\\[expect\\(' -- '*.rs'"
 
       - name: Verify SPDX headers
         run: |
@@ -201,7 +204,10 @@ jobs:
           tool: cargo-machete
 
       - name: cargo-deny
-        run: cargo deny --all-features check
+        run: cargo deny --all-features check bans licenses sources
 
       - name: cargo-machete
         run: cargo machete --skip-target-dir
+
+  advisories:
+    uses: ./.github/workflows/advisories.yml

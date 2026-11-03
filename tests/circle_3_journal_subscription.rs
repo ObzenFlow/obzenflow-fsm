@@ -21,9 +21,6 @@
 //! - Tests Arc<Context> with complex async I/O patterns
 //! - Proves the journal can maintain order even when everyone speaks at once
 
-#![allow(dead_code)]
-#![allow(deprecated)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
@@ -40,7 +37,6 @@ async fn test_3_journal_subscription_chaos() {
     #[derive(Clone, Debug, PartialEq)]
     enum BabelState {
         Speaking { language: String },
-        Listening,
         Confused,
         Silenced,
     }
@@ -49,7 +45,6 @@ async fn test_3_journal_subscription_chaos() {
         fn variant_name(&self) -> &str {
             match self {
                 BabelState::Speaking { .. } => "Speaking",
-                BabelState::Listening => "Listening",
                 BabelState::Confused => "Confused",
                 BabelState::Silenced => "Silenced",
             }
@@ -58,8 +53,7 @@ async fn test_3_journal_subscription_chaos() {
 
     #[derive(Clone, Debug)]
     enum BabelEvent {
-        Speak { message: String, language: String },
-        Listen { filter: String },
+        Speak { message: String },
         Overflow,
         Silence,
     }
@@ -68,7 +62,6 @@ async fn test_3_journal_subscription_chaos() {
         fn variant_name(&self) -> &str {
             match self {
                 BabelEvent::Speak { .. } => "Speak",
-                BabelEvent::Listen { .. } => "Listen",
                 BabelEvent::Overflow => "Overflow",
                 BabelEvent::Silence => "Silence",
             }
@@ -78,17 +71,12 @@ async fn test_3_journal_subscription_chaos() {
     #[derive(Clone, Debug, PartialEq)]
     enum BabelAction {
         WriteToJournal(String),
-        Subscribe(String),
         DropMessages,
     }
 
     // === THE SHARED JOURNAL (TOWER FOUNDATION) ===
     #[derive(Clone)]
     struct JournalEntry {
-        id: usize,
-        timestamp: std::time::Instant,
-        language: String,
-        message: String,
         vector_clock: HashMap<String, usize>,
     }
 
@@ -125,10 +113,6 @@ async fn test_3_journal_subscription_chaos() {
             match self {
                 BabelAction::WriteToJournal(_msg) => {
                     // Write to journal
-                    Ok(())
-                }
-                BabelAction::Subscribe(_language) => {
-                    // Subscribe to language
                     Ok(())
                 }
                 BabelAction::DropMessages => {
@@ -209,7 +193,7 @@ async fn test_3_journal_subscription_chaos() {
                 Box::pin(async move {
                     if let BabelEvent::Speak { message, .. } = event {
                         // === WRITING TO THE JOURNAL ===
-                        let msg_id = ctx.message_counter.fetch_add(1, Ordering::SeqCst);
+                        ctx.message_counter.fetch_add(1, Ordering::SeqCst);
 
                         // Update vector clock
                         let mut vector_clocks = ctx.vector_clocks.write().await;
@@ -222,10 +206,6 @@ async fn test_3_journal_subscription_chaos() {
 
                         // Create journal entry
                         let entry = JournalEntry {
-                            id: msg_id,
-                            timestamp: std::time::Instant::now(),
-                            language: lang.clone(),
-                            message: message.clone(),
                             vector_clock: current_clock,
                         };
 
@@ -311,15 +291,9 @@ async fn test_3_journal_subscription_chaos() {
             // === EACH BUILDER SPEAKS THEIR TRUTH ===
             for j in 0..100 {
                 let message = format!("Builder {i} speaks message {j} in {lang}");
-                fsm.handle(
-                    BabelEvent::Speak {
-                        message,
-                        language: lang.clone(),
-                    },
-                    &mut ctx,
-                )
-                .await
-                .unwrap();
+                fsm.handle(BabelEvent::Speak { message }, &mut ctx)
+                    .await
+                    .unwrap();
 
                 // Occasional chaos injection (but not too early!)
                 if j == 80 {
@@ -404,23 +378,6 @@ async fn test_3_journal_subscription_chaos() {
     // Check the journal integrity
     let journal = ctx.journal.read().await;
     let total_messages = journal.len();
-
-    // Verify vector clock consistency
-    let mut has_causal_violations = false;
-    for i in 1..journal.len() {
-        for (lang, &time) in &journal[i].vector_clock {
-            if let Some(&prev_time) = journal[i - 1].vector_clock.get(lang) {
-                if time < prev_time && journal[i].language == *lang {
-                    has_causal_violations = true;
-                }
-            }
-        }
-    }
-
-    // Some chaos is expected; this is a stress test rather than a strict causal-order proof.
-    // `has_causal_violations` remains available for debugging if the test ever needs to be
-    // tightened.
-    let _ = has_causal_violations;
 
     // Check subscriber results
     for (filter, count, out_of_order) in listeners {

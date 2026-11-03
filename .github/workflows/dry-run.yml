@@ -1,0 +1,368 @@
+name: Dry run
+run-name: Dry run ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Workspace version to verify; must match an existing tag vX.Y.Z"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    env:
+      REQUESTED_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Configure report directory
+        run: echo "REPORT_DIR=$RUNNER_TEMP/dry-run-report" >> "$GITHUB_ENV"
+
+      - name: Validate release version
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version must be X.Y.Z or X.Y.Z-prerelease, got '$REQUESTED_VERSION'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        id: checkout
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+
+      - name: Pin the checked-out commit
+        id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the release SHA passed full CI on main
+        id: ci
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ steps.resolve.outputs.sha }}
+        with:
+          script: |
+            const releaseSha = process.env.RELEASE_SHA;
+            const { data } = await github.request(
+              "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                branch: "main",
+                event: "push",
+                status: "success",
+                head_sha: releaseSha,
+                per_page: 100,
+              },
+            );
+
+            const run = data.workflow_runs.find((candidate) =>
+              candidate.head_sha === releaseSha &&
+              candidate.head_branch === "main" &&
+              candidate.event === "push" &&
+              candidate.status === "completed" &&
+              candidate.conclusion === "success"
+            );
+
+            if (!run) {
+              throw new Error(
+                `No successful full main CI run exists for release SHA ${releaseSha}. ` +
+                "Wait for the push-to-main CI run to pass, then dispatch again."
+              );
+            }
+
+            core.info(`Release SHA ${releaseSha} is sealed by ${run.html_url}`);
+            core.setOutput("run_url", run.html_url);
+            core.setOutput("run_number", run.run_number);
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+        with:
+          toolchain: 1.99.1
+
+      - name: Verify every release package
+        id: packages
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$REPORT_DIR"
+          : > "$REPORT_DIR/checks.tsv"
+          rustc --version > "$REPORT_DIR/toolchain.txt"
+          cargo --version >> "$REPORT_DIR/toolchain.txt"
+
+          fail() {
+            echo "::error::$1"
+            printf '%s\n' "$1" > "$REPORT_DIR/failure.txt"
+            exit 1
+          }
+
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+          printf '%s\n' "$metadata" > "$REPORT_DIR/metadata.json"
+          workspace_version="$(
+            jq -r '.packages[] | select(.name == "obzenflow-fsm") | .version' <<< "$metadata"
+          )"
+          [[ "$workspace_version" == "$REQUESTED_VERSION" ]] || \
+            fail "tag v$REQUESTED_VERSION has workspace version $workspace_version"
+
+          # Match cargo publish --workspace: publish = false is represented by
+          # an empty array in metadata.
+          release_packages="$(
+            jq -r '.packages[] | select(.publish != []) | .name' <<< "$metadata"
+          )"
+          [[ -n "$release_packages" ]] || fail "the tagged workspace has no publishable packages"
+
+          required_files=(
+            Cargo.toml
+            README.md
+            TRADEMARKS.md
+            LICENSE-MIT
+            LICENSE-APACHE
+          )
+          while IFS= read -r package_name; do
+            package="$(
+              jq -ce --arg name "$package_name" \
+                '.packages[] | select(.name == $name)' <<< "$metadata"
+            )"
+            package_version="$(jq -r '.version' <<< "$package")"
+            package_license="$(jq -r '.license // ""' <<< "$package")"
+            package_root="$(dirname "$(jq -r '.manifest_path' <<< "$package")")"
+
+            [[ "$package_version" == "$REQUESTED_VERSION" ]] || \
+              fail "$package_name has version $package_version, expected $REQUESTED_VERSION"
+            [[ "$package_license" == "MIT OR Apache-2.0" ]] || \
+              fail "$package_name has unexpected licence metadata: '$package_license'"
+
+            if [[ "$package_name" == "obzenflow-fsm" ]]; then
+              macros_req="$(
+                jq -r '.dependencies[] | select(.name == "obzenflow-fsm-macros") | .req' <<< "$package"
+              )"
+              [[ "$macros_req" == "=$REQUESTED_VERSION" ]] || \
+                fail "obzenflow-fsm requires obzenflow-fsm-macros $macros_req, expected =$REQUESTED_VERSION"
+            fi
+
+            package_files="$(
+              cargo package --package "$package_name" --locked --list
+            )"
+            printf '%s\n' "$package_files" > "$REPORT_DIR/$package_name.files"
+
+            for file in "${required_files[@]}"; do
+              grep -Fqx -- "$file" <<< "$package_files" || \
+                fail "$package_name archive is missing $file"
+            done
+
+            while IFS= read -r file; do
+              case "$file" in
+                .cargo_vcs_info.json|Cargo.lock|Cargo.toml|Cargo.toml.orig|README.md|TRADEMARKS.md|LICENSE-MIT|LICENSE-APACHE|src/*.rs)
+                  ;;
+                tests/*.rs|tests/*.stderr|tests/README.md|CHANGELOG.md)
+                  [[ "$package_name" == "obzenflow-fsm" ]] || \
+                    fail "$package_name archive contains unexpected file: $file"
+                  ;;
+                *)
+                  fail "$package_name archive contains unexpected file: $file"
+                  ;;
+              esac
+            done <<< "$package_files"
+            printf '%s\tarchive\n' "$package_name" >> "$REPORT_DIR/checks.tsv"
+
+            for file in TRADEMARKS.md LICENSE-MIT LICENSE-APACHE; do
+              cmp -s "$GITHUB_WORKSPACE/$file" "$package_root/$file" || \
+                fail "$package_name/$file differs from the canonical root copy"
+            done
+            printf '%s\tlicence\n' "$package_name" >> "$REPORT_DIR/checks.tsv"
+
+            printf 'Verified metadata and archive contents: %s %s\n' \
+              "$package_name" "$package_version"
+          done <<< "$release_packages"
+
+      - name: Dry-run the entire release
+        id: dry_run
+        # Cargo stages the unpublished macros crate with the main crate, so
+        # both are verified before either is uploaded.
+        run: cargo publish --workspace --locked --dry-run
+
+      - name: Write the dry-run report
+        if: always()
+        env:
+          RELEASE_SHA: ${{ steps.resolve.outputs.sha }}
+          MAIN_CI_URL: ${{ steps.ci.outputs.run_url }}
+          MAIN_CI_NUMBER: ${{ steps.ci.outputs.run_number }}
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          set +e
+          set -uo pipefail
+
+          mkdir -p "$REPORT_DIR"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+
+          outcome() {
+            jq -r --arg step "$1" '.[$step].outcome // "not run"' <<< "$STEP_RESULTS"
+          }
+
+          checks=(
+            "version|Version input"
+            "checkout|Release tag checkout"
+            "resolve|Release commit SHA"
+            "ci|Successful full main CI for the release SHA"
+            "toolchain|Rust 1.99.1 setup"
+            "packages|Package versions, the macros requirement, archive rules and licences"
+            "dry_run|Cargo packaging, dependency resolution and build verification"
+          )
+
+          metadata="{}"
+          if [[ -f "$REPORT_DIR/metadata.json" ]]; then
+            metadata="$(cat "$REPORT_DIR/metadata.json")"
+          fi
+          build_dir="$(jq -r '.build_directory // ""' <<< "$metadata")"
+          completed=""
+          if [[ -f "$REPORT_DIR/checks.tsv" ]]; then
+            completed="$(cat "$REPORT_DIR/checks.tsv")"
+          fi
+          packages="$(
+            jq -r '[.packages[]? | select(.publish != [])] | sort_by(.name)[] | "\(.name)\t\(.version)\t\(.license)"' <<< "$metadata"
+          )"
+
+          inspection_errors=()
+          overview=()
+          details="$REPORT_DIR/details.md"
+          : > "$details"
+
+          while IFS=$'\t' read -r name version licence; do
+            [[ -n "$name" ]] || continue
+            archive_name="$name-$version"
+            archive="$build_dir/package/tmp-crate/$archive_name.crate"
+            listing="$REPORT_DIR/$name.files"
+            files=""
+            if [[ -f "$listing" ]]; then
+              files="$(sort "$listing")"
+            fi
+            source="Preflight file list; no packaged archive available"
+            vcs_sha="Unavailable"
+
+            if [[ -n "$build_dir" && -f "$archive" ]]; then
+              vcs="$(tar -xzOf "$archive" "$archive_name/.cargo_vcs_info.json" 2>/dev/null || echo '{}')"
+              vcs_sha="$(jq -r '.git.sha1 // "Unavailable"' <<< "$vcs")"
+              dirty="$(jq -r '.git.dirty // false' <<< "$vcs")"
+              packed="$(tar -tzf "$archive" | sed "s|^$archive_name/||" | grep -v '/$' | sort)"
+              if [[ "$vcs_sha" != "$RELEASE_SHA" || "$dirty" != "false" ]]; then
+                inspection_errors+=("$name: packaged VCS identity does not match the clean release SHA")
+                source="Archive inspection incomplete"
+              elif [[ "$packed" != "$files" ]]; then
+                inspection_errors+=("$name: packaged file list differs from the checked preflight list")
+                source="Archive inspection incomplete"
+              else
+                files="$packed"
+                source="Generated archive: $archive_name.crate"
+              fi
+            elif [[ "$(outcome dry_run)" == "success" ]]; then
+              inspection_errors+=("$name: expected archive $archive_name.crate is missing")
+            fi
+
+            archive_check="Not completed"
+            if grep -Fqx -- "$name"$'\tarchive' <<< "$completed"; then
+              archive_check="Passed"
+            fi
+            licence_check="Not completed"
+            if grep -Fqx -- "$name"$'\tlicence' <<< "$completed"; then
+              licence_check="Passed"
+            fi
+            file_count="$(grep -c . <<< "$files" || true)"
+            overview+=("| $name | $version | $licence | $archive_check | $licence_check | $file_count |")
+
+            macros_req="$(
+              jq -r --arg name "$name" '.packages[] | select(.name == $name) | .dependencies[] | select(.name == "obzenflow-fsm-macros") | .req' <<< "$metadata"
+            )"
+            {
+              printf '## %s %s\n\n' "$name" "$version"
+              printf 'File source: %s\n\n' "$source"
+              printf 'Packaged commit SHA: `%s`\n\n' "$vcs_sha"
+              if [[ -n "$macros_req" ]]; then
+                printf 'Requires `obzenflow-fsm-macros %s`.\n\n' "$macros_req"
+              fi
+              printf '### Files (%s)\n\n' "$file_count"
+              printf '```text\n%s\n```\n\n' "$files"
+            } >> "$details"
+          done <<< "$packages"
+
+          passed=true
+          for check in "${checks[@]}"; do
+            [[ "$(outcome "${check%%|*}")" == "success" ]] || passed=false
+          done
+          [[ -n "$packages" && ${#inspection_errors[@]} -eq 0 ]] || passed=false
+          result="FAILED OR INCOMPLETE"
+          if [[ "$passed" == true ]]; then
+            result="PASSED"
+          fi
+
+          report="$REPORT_DIR/dry-run-report-$GITHUB_RUN_ATTEMPT.md"
+          {
+            printf '# Dry run report: v%s\n\n' "$REQUESTED_VERSION"
+            printf '**Result: %s**\n\n' "$result"
+            printf 'No crates were uploaded.\n\n'
+            printf 'Repository: %s\n\n' "$GITHUB_REPOSITORY"
+            printf 'Tag: `v%s`\n\n' "$REQUESTED_VERSION"
+            printf 'Release commit SHA: `%s`\n\n' "${RELEASE_SHA:-Unavailable}"
+            printf 'Dry-run workflow: %s\n\n' "$run_url"
+            if [[ -n "$MAIN_CI_URL" ]]; then
+              printf 'Main CI seal: [#%s](%s)\n\n' "$MAIN_CI_NUMBER" "$MAIN_CI_URL"
+            else
+              printf 'Main CI seal: unavailable; see verification results.\n\n'
+            fi
+            printf '## Verification\n\n'
+            printf '| Check | Result |\n| --- | --- |\n'
+            for check in "${checks[@]}"; do
+              printf '| %s | %s |\n' "${check#*|}" "$(outcome "${check%%|*}")"
+            done
+            printf '\nCommand: `cargo publish --workspace --locked --dry-run`\n\n'
+            if [[ -f "$REPORT_DIR/toolchain.txt" ]]; then
+              printf '```text\n%s\n```\n\n' "$(cat "$REPORT_DIR/toolchain.txt")"
+            fi
+            if [[ -f "$REPORT_DIR/failure.txt" ]]; then
+              printf 'Validation error:\n\n```text\n%s\n```\n\n' "$(cat "$REPORT_DIR/failure.txt")"
+            fi
+            if [[ ${#inspection_errors[@]} -gt 0 ]]; then
+              printf 'Archive inspection errors:\n\n'
+              printf -- '- %s\n' "${inspection_errors[@]}"
+              printf '\n'
+            fi
+            if [[ "$passed" != true ]]; then
+              printf '**This report is partial. Review the failed or incomplete steps in the [run logs](%s).**\n\n' "$run_url"
+            fi
+            printf '## Packages\n\n'
+            printf '| Crate | Version | Licence | Archive rules | Licence metadata and copies | Files |\n'
+            printf '| --- | --- | --- | --- | --- | --- |\n'
+            if [[ ${#overview[@]} -gt 0 ]]; then
+              printf '%s\n' "${overview[@]}"
+            fi
+            printf '\nArchive rules: required files and allowed file types, matching the individual publisher.\n\n'
+            printf 'Licence checks: MIT OR Apache-2.0 metadata; TRADEMARKS.md, LICENSE-MIT and LICENSE-APACHE match the root copies.\n\n'
+            printf 'File counts include Cargo-generated files.\n\n'
+            cat "$details"
+            printf 'Publish one crate at a time in dependency order, `obzenflow-fsm-macros` then `obzenflow-fsm`, using this tag and release SHA.\n'
+          } > "$report"
+
+          {
+            printf '## Dry run: %s\n\n' "$result"
+            printf 'Copy the report below, or download `%s` from this run'"'"'s artifacts.\n\n' "$(basename "$report")"
+            printf '````markdown\n%s\n````\n' "$(cat "$report")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ${#inspection_errors[@]} -gt 0 ]]; then
+            echo "::error::Packaged archive inspection failed; see the dry-run report."
+            exit 1
+          fi
+
+      - name: Upload the dry-run report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.REPORT_DIR }}/dry-run-report-${{ github.run_attempt }}.md
+          archive: false
+          if-no-files-found: error

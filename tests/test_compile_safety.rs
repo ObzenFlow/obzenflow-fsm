@@ -7,9 +7,6 @@
 //! Many of these tests are commented out because they SHOULD NOT compile.
 //! They demonstrate the type safety of our FSM implementation.
 
-#![allow(dead_code)]
-#![allow(deprecated)]
-
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::fmt::Debug;
@@ -61,7 +58,7 @@ impl FsmAction for ValidAction {
 /// This SHOULD compile - it's our baseline
 #[test]
 fn test_valid_fsm_compiles() {
-    let _ = FsmBuilder::new(ValidState::A)
+    let machine = FsmBuilder::new(ValidState::A)
         .when("A")
         .on(
             "Go",
@@ -76,6 +73,7 @@ fn test_valid_fsm_compiles() {
         )
         .done()
         .build();
+    assert_eq!(machine.state(), &ValidState::A);
 }
 
 // The following tests demonstrate what SHOULD NOT compile
@@ -325,13 +323,11 @@ async fn test_trait_object_safety() {
 }
 
 /// Test that phantom types provide additional safety
-#[test]
-fn test_phantom_type_safety() {
+#[tokio::test]
+async fn test_phantom_type_safety() {
     use std::marker::PhantomData;
 
     // Type-level authentication states
-    #[derive(Clone, Debug, PartialEq)]
-    struct Authenticated;
     #[derive(Clone, Debug, PartialEq)]
     struct Unauthenticated;
 
@@ -352,16 +348,12 @@ fn test_phantom_type_safety() {
     #[derive(Clone, Debug)]
     enum AuthEvent {
         Login { password: String },
-        Logout,
-        AccessResource, // Only valid when authenticated
     }
 
     impl EventVariant for AuthEvent {
         fn variant_name(&self) -> &str {
             match self {
                 AuthEvent::Login { .. } => "Login",
-                AuthEvent::Logout => "Logout",
-                AuthEvent::AccessResource => "AccessResource",
             }
         }
     }
@@ -370,7 +362,6 @@ fn test_phantom_type_safety() {
     enum AuthAction {
         GrantAccess,
         DenyAccess,
-        LogActivity,
     }
 
     struct AuthContext;
@@ -390,7 +381,7 @@ fn test_phantom_type_safety() {
     // at the type level, though our FSM doesn't enforce this at compile time
     // for state transitions (that would require type-state pattern)
 
-    let _ = FsmBuilder::new(AuthState::<Unauthenticated>::State {
+    let mut machine = FsmBuilder::new(AuthState::<Unauthenticated>::State {
         data: "guest".to_string(),
         _phantom: PhantomData,
     })
@@ -401,28 +392,36 @@ fn test_phantom_type_safety() {
             let state = state.clone();
             let event = event.clone();
             Box::pin(async move {
-                if let AuthEvent::Login { password } = event {
-                    if password == "correct" {
-                        // In a real system, this would upgrade auth level
-                        // For demonstration, we stay in same type
-                        Ok(Transition {
-                            next_state: state.clone(),
-                            actions: vec![AuthAction::GrantAccess],
-                        })
-                    } else {
-                        Ok(Transition {
-                            next_state: state.clone(),
-                            actions: vec![AuthAction::DenyAccess],
-                        })
-                    }
+                let AuthEvent::Login { password } = event;
+                if password == "correct" {
+                    // In a real system, this would upgrade auth level
+                    // For demonstration, we stay in same type
+                    Ok(Transition {
+                        next_state: state.clone(),
+                        actions: vec![AuthAction::GrantAccess],
+                    })
                 } else {
-                    unreachable!()
+                    Ok(Transition {
+                        next_state: state.clone(),
+                        actions: vec![AuthAction::DenyAccess],
+                    })
                 }
             })
         },
     )
     .done()
     .build();
+
+    let actions = machine
+        .handle(
+            AuthEvent::Login {
+                password: "correct".to_string(),
+            },
+            &mut AuthContext,
+        )
+        .await
+        .unwrap();
+    assert_eq!(actions, vec![AuthAction::GrantAccess]);
 }
 
 /// Test that we handle Send + Sync requirements correctly
@@ -445,7 +444,6 @@ async fn test_send_sync_requirements() {
     // Context must be Send + Sync, so we use Arc instead of Rc
     struct ContextWithArc {
         shared_data: Arc<String>,
-        other_data: Arc<String>,
     }
 
     impl FsmContext for ContextWithArc {}
@@ -475,8 +473,8 @@ async fn test_send_sync_requirements() {
 
             Box::pin(async move {
                 // We can use Arc in async block
-                let _ = shared.len();
-                let _ = ctx_shared.len();
+                assert_eq!(shared.as_str(), "initial");
+                assert_eq!(ctx_shared.as_str(), "shared");
 
                 Ok(Transition {
                     next_state: SendState {
@@ -493,15 +491,14 @@ async fn test_send_sync_requirements() {
     let mut machine = fsm;
     let mut ctx = ContextWithArc {
         shared_data: Arc::new("shared".to_string()),
-        other_data: Arc::new("other".to_string()),
     };
 
     machine.handle(ValidEvent::Go, &mut ctx).await.unwrap();
 }
 
 /// Test const generics with FSM
-#[test]
-fn test_const_generic_states() {
+#[tokio::test]
+async fn test_const_generic_states() {
     #[derive(Clone, Debug, PartialEq)]
     enum SizedState<const N: usize> {
         Array { data: [u8; N] },
@@ -548,29 +545,38 @@ fn test_const_generic_states() {
     }
 
     // FSM with compile-time sized arrays
-    let _ = FsmBuilder::<SizedState<32>, SizedEvent, NoContext, NoAction>::new(SizedState::Empty)
-        .when("Empty")
-        .on("Fill", |_state, _event, _ctx: &mut NoContext| {
-            Box::pin(async {
-                Ok(Transition {
-                    next_state: SizedState::Array { data: [42u8; 32] },
-                    actions: vec![],
+    let mut machine =
+        FsmBuilder::<SizedState<32>, SizedEvent, NoContext, NoAction>::new(SizedState::Empty)
+            .when("Empty")
+            .on("Fill", |_state, _event, _ctx: &mut NoContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: SizedState::Array { data: [42u8; 32] },
+                        actions: vec![],
+                    })
                 })
             })
-        })
-        .done()
-        .when("Array")
-        .on("Clear", |_state, _event, _ctx: &mut NoContext| {
-            Box::pin(async {
-                Ok(Transition {
-                    next_state: SizedState::Empty,
-                    actions: vec![],
+            .done()
+            .when("Array")
+            .on("Clear", |_state, _event, _ctx: &mut NoContext| {
+                Box::pin(async {
+                    Ok(Transition {
+                        next_state: SizedState::Empty,
+                        actions: vec![],
+                    })
                 })
             })
-        })
-        .done()
-        .build();
+            .done()
+            .build();
 
-    // Different size - completely different type
-    let _ = FsmBuilder::<SizedState<64>, SizedEvent, NoContext, NoAction>::new(SizedState::Empty);
+    machine
+        .handle(SizedEvent::Fill, &mut NoContext)
+        .await
+        .unwrap();
+    assert_eq!(machine.state(), &SizedState::Array { data: [42u8; 32] });
+    machine
+        .handle(SizedEvent::Clear, &mut NoContext)
+        .await
+        .unwrap();
+    assert_eq!(machine.state(), &SizedState::Empty);
 }

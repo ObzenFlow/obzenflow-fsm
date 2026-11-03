@@ -12,7 +12,7 @@
 //!
 //! God's Divine Defense:
 //! - Arc<Context> provides holy thread-safe sharing
-//! - fetch_update with checked_sub prevents underflow (no negative demons allowed!)
+//! - try_update with checked_sub prevents underflow (no negative demons allowed!)
 //! - SeqCst ordering maintains causality (even Satan must obey physics)
 //! - The barrier ensures all demons reach hell before we verify the count
 //!
@@ -26,15 +26,13 @@
 //! - This is how stages track in-flight events during drain
 //! - If our Arc<Context> pattern can't handle this, we're doomed (literally)
 
-#![allow(deprecated)]
-
 use async_trait::async_trait;
 use obzenflow_fsm::internal::FsmBuilder;
 use obzenflow_fsm::{EventVariant, FsmAction, FsmContext, StateVariant, Transition};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Barrier, RwLock};
+use tokio::sync::{Barrier, RwLock};
 
 #[tokio::test]
 async fn test_race_condition_from_hell() {
@@ -91,8 +89,6 @@ async fn test_race_condition_from_hell() {
         in_flight: Arc<AtomicU64>,
         // Complex nested locks like in the real system
         metrics: Arc<RwLock<HashMap<String, Arc<AtomicU64>>>>,
-        // Broadcast for shutdown like pipeline uses
-        shutdown_tx: broadcast::Sender<()>,
         // Drain coordination
         drain_barrier: Arc<Barrier>,
     }
@@ -110,7 +106,7 @@ async fn test_race_condition_from_hell() {
     impl FsmAction for RaceAction {
         type Context = RaceContext;
 
-        async fn execute(&self, ctx: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
+        async fn execute(&self, _: &mut Self::Context) -> obzenflow_fsm::types::FsmResult<()> {
             match self {
                 RaceAction::StartTracking => {
                     // Initialize tracking
@@ -122,7 +118,6 @@ async fn test_race_condition_from_hell() {
                 }
                 RaceAction::SignalDrain => {
                     // Signal drain
-                    let _ = ctx.shutdown_tx.send(());
                     Ok(())
                 }
             }
@@ -131,13 +126,11 @@ async fn test_race_condition_from_hell() {
 
     let in_flight = Arc::new(AtomicU64::new(0));
     let metrics = Arc::new(RwLock::new(HashMap::new()));
-    let (shutdown_tx, _) = broadcast::channel(100);
     let drain_barrier = Arc::new(Barrier::new(11)); // 10 FSMs + 1 coordinator
 
     let ctx = RaceContext {
         in_flight: in_flight.clone(),
         metrics: metrics.clone(),
-        shutdown_tx: shutdown_tx.clone(),
         drain_barrier: drain_barrier.clone(),
     };
 
@@ -147,14 +140,12 @@ async fn test_race_condition_from_hell() {
     for i in 0..10 {
         let in_flight = in_flight.clone();
         let metrics = metrics.clone();
-        let shutdown_tx = shutdown_tx.clone();
         let drain_barrier = drain_barrier.clone();
 
         let handle = tokio::spawn(async move {
             let mut ctx = RaceContext {
                 in_flight,
                 metrics,
-                shutdown_tx,
                 drain_barrier,
             };
 
@@ -205,7 +196,7 @@ async fn test_race_condition_from_hell() {
                         // Simulate in-flight decrement with underflow protection
                         let old =
                             ctx.in_flight
-                                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                                .try_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
                                     v.checked_sub(1)
                                 });
 
@@ -224,19 +215,14 @@ async fn test_race_condition_from_hell() {
                         }
                     })
                 })
-                .on(
-                    "BeginDrain",
-                    move |_state, _event, ctx: &mut RaceContext| {
-                        Box::pin(async move {
-                            // Broadcast shutdown
-                            let _ = ctx.shutdown_tx.send(());
-                            Ok(Transition {
-                                next_state: RaceState::Draining,
-                                actions: vec![RaceAction::SignalDrain],
-                            })
+                .on("BeginDrain", move |_state, _event, _: &mut RaceContext| {
+                    Box::pin(async move {
+                        Ok(Transition {
+                            next_state: RaceState::Draining,
+                            actions: vec![RaceAction::SignalDrain],
                         })
-                    },
-                )
+                    })
+                })
                 .done()
                 .when("Draining")
                 .on(

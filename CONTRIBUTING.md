@@ -60,7 +60,7 @@ cargo test -- --nocapture
 
 - Follow standard Rust conventions
 - Use `cargo fmt` to format your code
-- Use `cargo clippy` to catch common mistakes
+- Use `cargo clippy` to catch common mistakes, and fix what it reports at the cause; `#[allow]`, `#[expect]` and `let _` discards fail CI
 - Add documentation comments for public APIs
 - Include examples in doc comments where appropriate
 
@@ -139,6 +139,15 @@ When contributing, please keep these design principles in mind:
 3. **Zero-Copy Where Possible**: Minimize allocations and copies
 4. **Composability**: Features should compose well with existing functionality
 5. **Simplicity**: Keep the API surface small and intuitive
+
+## Releasing
+
+Maintainers release from CI. Both crates share the version in `[workspace.package]`.
+
+1. Set the new version in `[workspace.package]` and in the `obzenflow-fsm-macros` requirement in `Cargo.toml`, and move the CHANGELOG's Unreleased entries under it.
+2. Merge to `main` and wait for that commit's CI run to pass.
+3. Tag the commit `vX.Y.Z` and push the tag.
+4. Run the "Publish to crates.io" workflow with that version for `obzenflow-fsm-macros`, then again for `obzenflow-fsm`. Each run stops at the `release` approval after its pre-flight report.
 
 ## Questions?
 

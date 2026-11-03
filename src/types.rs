@@ -152,7 +152,7 @@ impl<S: Clone, A> StayBuilder<S, A> {
 /// `obzenflow-fsm` uses `variant_name()` as the dispatch key for transition tables.
 /// For enum-based states, the name should reflect the enum *variant* (ignoring any payload).
 ///
-/// The recommended approach is to derive it:
+/// `fsm!` requires it to be derived, generic enums included:
 /// `#[derive(obzenflow_fsm::StateVariant)]`.
 pub trait StateVariant: Clone + Debug + PartialEq + Send + Sync + 'static {
     /// Returns the state variant name (without data).
@@ -165,7 +165,7 @@ pub trait StateVariant: Clone + Debug + PartialEq + Send + Sync + 'static {
 ///
 /// `obzenflow-fsm` uses `variant_name()` as the dispatch key for transition tables.
 ///
-/// The recommended approach is to derive it:
+/// `fsm!` requires it to be derived, generic enums included:
 /// `#[derive(obzenflow_fsm::EventVariant)]`.
 pub trait EventVariant: Clone + Debug + Send + Sync + 'static {
     /// Returns the event variant name (without data).
@@ -207,7 +207,7 @@ pub trait FsmAction: Clone + Debug + Send + Sync + 'static {
 
 /// A boxed `Send` future.
 ///
-/// This is primarily used by the legacy builder API and the `fsm!` macro expansion.
+/// This is primarily used by the `fsm!` macro expansion.
 pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 /// Result type used by handlers and actions.
