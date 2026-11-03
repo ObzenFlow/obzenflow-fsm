@@ -1,6 +1,6 @@
 [package]
 name = "obzenflow-fsm"
-description = "Async-first Finite State Machine library inspired by Akka (Classic) FSM"
+description = "Async-first finite state machine (FSM) library"
 version.workspace = true
 edition = "2021"
 authors = ["ObzenFlow Contributors"]
@@ -14,7 +14,10 @@ categories = ["asynchronous", "data-structures", "algorithms"]
 publish = true
 include = [
     "/src/**/*.rs",
-    "/tests/**",
+    "/examples/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/compile_fail/*.stderr",
+    "/tests/README.md",
     "/Cargo.toml",
     "/README.md",
     "/CHANGELOG.md",

@@ -147,7 +147,8 @@ Maintainers release from CI. Both crates share the version in `[workspace.packag
 1. Set the new version in `[workspace.package]` and in the `obzenflow-fsm-macros` requirement in `Cargo.toml`, and move the CHANGELOG's Unreleased entries under it.
 2. Merge to `main` and wait for that commit's CI run to pass.
 3. Tag the commit `vX.Y.Z` and push the tag.
-4. Run the "Publish to crates.io" workflow with that version for `obzenflow-fsm-macros`, then again for `obzenflow-fsm`. Each run stops at the `release` approval after its pre-flight report.
+4. Run the "Dry run" workflow with that version and check that its report passes for both crates.
+5. Run the "Publish to crates.io" workflow with that version for `obzenflow-fsm-macros`, then again for `obzenflow-fsm`. Each run stops at the `release` approval after its pre-flight report.
 
 ## Questions?
 

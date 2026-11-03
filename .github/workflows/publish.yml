@@ -155,7 +155,7 @@ jobs:
             case "$file" in
               .cargo_vcs_info.json|Cargo.lock|Cargo.toml|Cargo.toml.orig|README.md|TRADEMARKS.md|LICENSE-MIT|LICENSE-APACHE|src/*.rs)
                 ;;
-              tests/*.rs|tests/*.stderr|tests/README.md|CHANGELOG.md)
+              examples/*.rs|tests/*.rs|tests/compile_fail/*.stderr|tests/README.md|CHANGELOG.md)
                 [[ "$REQUESTED_PACKAGE" == "obzenflow-fsm" ]] || \
                   fail "$REQUESTED_PACKAGE archive contains unexpected file: $file"
                 ;;
