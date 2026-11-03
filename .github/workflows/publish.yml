@@ -191,6 +191,8 @@ jobs:
 
           file_count="$(wc -l <<< "$package_files" | tr -d '[:space:]')"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          # Match the dry-run report: one outer code block makes the whole
+          # Markdown report copyable, including its nested file-list block.
           {
             printf '## Publish preflight: PASSED\n\n'
             printf 'Copy the report below for review before approving publication.\n\n'
@@ -206,7 +208,7 @@ jobs:
             printf 'Licence: `%s`\n\n' "$package_license"
             printf '## Verification\n\n'
             printf '| Check | Result |\n| --- | --- |\n'
-            printf '| Release inputs and crate version | Passed |\n'
+            printf '| Release inputs and package/workspace versions | Passed |\n'
             printf '| Release tag checkout and commit SHA | Passed |\n'
             printf '| Successful full main CI for the release SHA | Passed |\n'
             printf '| Required archive files and allowed file types | Passed |\n'

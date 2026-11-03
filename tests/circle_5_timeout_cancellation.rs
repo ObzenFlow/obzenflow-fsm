@@ -80,7 +80,7 @@ async fn test_5_timeout_cancellation_inferno() {
         BufferData(String),
         ProcessData(String),
         PoisonDownstream, // Send kool-aid to all subscribers
-        CommitSuicide,    // FSM terminates itself
+        Terminate,
     }
 
     #[derive(Clone)]
@@ -124,10 +124,7 @@ async fn test_5_timeout_cancellation_inferno() {
                     ctx.kool_aid_emitted.store(true, Ordering::Release);
                     Ok(())
                 }
-                PurgatoryAction::CommitSuicide => {
-                    // FSM terminates itself
-                    Ok(())
-                }
+                PurgatoryAction::Terminate => Ok(()),
             }
         }
     }
@@ -379,7 +376,7 @@ async fn test_5_timeout_cancellation_inferno() {
                 ctx.kool_aid_emitted.store(true, Ordering::SeqCst);
                 Ok(Transition {
                     next_state: PurgatoryState::Dead,
-                    actions: vec![PurgatoryAction::CommitSuicide],
+                    actions: vec![PurgatoryAction::Terminate],
                 })
             })
         },
